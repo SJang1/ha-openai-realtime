@@ -406,6 +406,13 @@ class HomeAssistantMCPTools:
         entity_id = arguments.get("entity_id")
         data = arguments.get("data", {})
 
+        # Include any extra arguments as service data
+        # (AI sometimes passes service-specific params like temperature at top level)
+        reserved_keys = {"domain", "service", "entity_id", "data"}
+        for key, value in arguments.items():
+            if key not in reserved_keys and key not in data:
+                data[key] = value
+
         if entity_id:
             data["entity_id"] = entity_id
 
