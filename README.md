@@ -283,7 +283,14 @@ lovelace:
 
 ### Step 2: Add the Card to Dashboard
 
-Add this to your Lovelace dashboard:
+> **Note**: This card does not support the visual editor. When you see the error "Visual editor is not supported" or `setConfig is not a function`, use the YAML editor instead.
+
+#### Using YAML Editor
+
+1. Go to your dashboard and click **Edit** (pencil icon)
+2. Click **+ Add Card**
+3. Scroll down and select **Manual** (or click the three dots and choose "Edit in YAML")
+4. Paste the following configuration:
 
 ```yaml
 type: custom:openai-realtime-card
@@ -291,6 +298,16 @@ title: OpenAI Realtime Voice
 show_transcript: true
 show_waveform: true
 ```
+
+5. Click **Save**
+
+#### Editing an Existing Card
+
+If you need to edit the card later:
+1. Click the three dots (⋮) on the card
+2. Select **Edit** 
+3. If you see "Visual editor is not supported", click **Edit in YAML**
+4. Make your changes and save
 
 ### Card Features
 
