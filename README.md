@@ -268,7 +268,7 @@ The integration tries to register the card automatically, but you may need to ad
 1. Go to **Settings** → **Dashboards** → **⋮ (three dots)** → **Resources**
 2. Click **Add Resource**
 3. Enter:
-   - **URL**: `/api/openai_realtime/openai-realtime-card.js`
+   - **URL**: `/openai_realtime/openai-realtime-card.js`
    - **Resource type**: JavaScript Module
 4. Click **Create**
 
@@ -277,7 +277,7 @@ Alternatively, add to your `configuration.yaml`:
 ```yaml
 lovelace:
   resources:
-    - url: /api/openai_realtime/openai-realtime-card.js
+    - url: /openai_realtime/openai-realtime-card.js
       type: module
 ```
 
