@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "OpenAI Realtime Configuration",
+        "description": "Enter your OpenAI API key to get started.",
+        "data": {
+          "api_key": "API Key"
+        }
+      },
+      "configure": {
+        "title": "Configure OpenAI Realtime",
+        "description": "Configure the realtime conversation settings.",
+        "data": {
+          "name": "Name",
+          "model": "Model",
+          "voice": "Voice",
+          "instructions": "System Instructions",
+          "temperature": "Temperature",
+          "max_output_tokens": "Max Output Tokens"
+        }
+      },
+      "mcp_server_add": {
+        "title": "Add MCP Server",
+        "description": "Optionally add MCP (Model Context Protocol) servers for extended functionality. You have added {server_count} server(s).",
+        "data": {
+          "name": "Server Name",
+          "url": "Server URL",
+          "token": "Authentication Token (optional)",
+          "add_another": "Add another server"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid API key. Please check your OpenAI API key.",
+      "cannot_connect": "Could not connect to OpenAI API.",
+      "invalid_url": "Invalid MCP server URL. URL must start with http://, https://, ws://, or wss://",
+      "unknown": "An unknown error occurred."
+    },
+    "abort": {
+      "already_configured": "This account is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "OpenAI Realtime Options",
+        "description": "Update the realtime conversation settings.",
+        "data": {
+          "model": "Model",
+          "voice": "Voice",
+          "instructions": "System Instructions",
+          "temperature": "Temperature",
+          "max_output_tokens": "Max Output Tokens"
+        }
+      }
+    }
+  }
+}

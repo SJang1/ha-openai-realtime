@@ -1,0 +1,12 @@
+{
+  "domain": "openai_realtime",
+  "name": "OpenAI Realtime Conversation",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["conversation", "media_player", "stt", "tts", "http", "frontend"],
+  "documentation": "https://github.com/your-repo/ha-openai-realtime",
+  "iot_class": "cloud_push",
+  "issue_tracker": "https://github.com/your-repo/ha-openai-realtime/issues",
+  "requirements": ["websockets>=12.0", "aiohttp>=3.9.0"],
+  "version": "1.0.0"
+}

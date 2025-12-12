@@ -1,0 +1,495 @@
+# OpenAI Realtime Conversation for Home Assistant
+
+A Home Assistant custom component that integrates with OpenAI's Realtime API for real-time voice and text conversations, with MCP (Model Context Protocol) server support.
+
+## Features
+
+- **Real-time Conversations**: Uses OpenAI's Realtime API with WebSocket for low-latency responses
+- **Native Speech-to-Speech**: Direct audio processing without separate STT/TTS pipeline
+- **Voice Support**: Native speech-to-speech capabilities with configurable voices
+- **MCP Server Integration**: Connect to external MCP servers for extended tool capabilities
+- **Home Assistant Integration**: Built-in tools for controlling smart home devices
+- **Conversation Agent**: Works as a Home Assistant conversation agent
+- **Media Player Entity**: Control audio input/output directly
+- **Binary Sensors**: Monitor connection, listening, speaking, and processing states
+- **Custom STT/TTS Providers**: Use Realtime API for speech recognition and synthesis
+
+## Architecture
+
+Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this integration uses OpenAI's Realtime API which handles **speech-to-speech directly**:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│ Default HA Pipeline                                      │
+│ ┌─────┐    ┌────────────┐    ┌─────┐                    │
+│ │ Mic │───▶│ STT Engine │───▶│ AI  │───▶│ TTS │───▶🔊  │
+│ └─────┘    └────────────┘    └─────┘    └─────┘         │
+└─────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────┐
+│ OpenAI Realtime Pipeline                                 │
+│ ┌─────┐    ┌───────────────────────────────┐            │
+│ │ Mic │───▶│ OpenAI Realtime API           │───▶🔊     │
+│ └─────┘    │ (Native Speech-to-Speech)     │            │
+│            └───────────────────────────────┘            │
+└─────────────────────────────────────────────────────────┘
+```
+
+## Requirements
+
+- Home Assistant 2024.1.0 or later
+- OpenAI API key with access to the Realtime API
+- Python 3.11 or later
+
+## Installation
+
+### HACS (Recommended)
+
+1. Open HACS in your Home Assistant
+2. Click on "Integrations"
+3. Click the three dots in the top right corner
+4. Select "Custom repositories"
+5. Add this repository URL
+6. Install "OpenAI Realtime Conversation"
+7. Restart Home Assistant
+
+### Manual Installation
+
+1. Download the `custom_components/openai_realtime` folder
+2. Copy it to your Home Assistant `custom_components` directory
+3. Restart Home Assistant
+
+## Configuration
+
+1. Go to **Settings** → **Devices & Services** → **Add Integration**
+2. Search for "OpenAI Realtime"
+3. Enter your OpenAI API key
+4. Configure the settings:
+   - **Model**: Select the Realtime model (default: `gpt-realtime`)
+   - **Voice**: Choose the voice for audio responses
+   - **Instructions**: Custom system instructions
+   - **Temperature**: Response creativity (0.0 - 2.0)
+   - **Max Output Tokens**: Maximum response length
+5. Optionally add MCP servers for extended functionality
+
+## MCP Server Configuration
+
+MCP (Model Context Protocol) servers allow you to extend the AI's capabilities with external tools.
+
+To add an MCP server:
+1. During setup or in options, provide:
+   - **Server Name**: A unique identifier for the server
+   - **Server URL**: The HTTP/HTTPS endpoint of the MCP server
+   - **Token** (optional): Authentication token if required
+
+### Example MCP Server Setup
+
+```yaml
+# Example MCP server configuration
+name: my_mcp_server
+url: https://my-mcp-server.example.com/mcp
+token: your-auth-token
+```
+
+## Built-in Home Assistant Tools
+
+The integration provides these built-in tools for controlling Home Assistant:
+
+### get_entity_state
+Get the current state of any Home Assistant entity.
+```
+"Turn on the living room light" → Checks light.living_room state
+```
+
+### call_service
+Call any Home Assistant service.
+```
+"Set the thermostat to 72 degrees" → climate.set_temperature
+```
+
+### get_entities_by_domain
+List all entities in a domain.
+```
+"What lights do I have?" → Lists all light entities
+```
+
+### get_area_entities
+Get all entities in a specific area.
+```
+"What devices are in the bedroom?" → Lists entities in bedroom area
+```
+
+## Usage
+
+### As Conversation Agent
+
+1. Go to **Settings** → **Voice Assistants**
+2. Create a new assistant or edit an existing one
+3. Select "OpenAI Realtime" as the conversation agent
+4. Use with any voice input method (Assist, voice satellites, etc.)
+
+### Using the Media Player
+
+The integration creates a media player entity for direct audio control:
+
+- **Play**: Start listening for audio input
+- **Stop**: Stop audio processing and cancel responses
+
+### Binary Sensors
+
+Monitor the state of the realtime connection:
+
+| Sensor | Description |
+|--------|-------------|
+| `binary_sensor.openai_realtime_connected` | WebSocket connection status |
+| `binary_sensor.openai_realtime_listening` | User is speaking (VAD detected) |
+| `binary_sensor.openai_realtime_speaking` | Assistant is responding |
+| `binary_sensor.openai_realtime_processing` | Request is being processed |
+
+### Services
+
+#### openai_realtime.send_message
+Send a text message and get a response.
+```yaml
+service: openai_realtime.send_message
+data:
+  message: "What's the weather like?"
+```
+
+#### openai_realtime.send_audio
+Send audio data directly to the API.
+```yaml
+service: openai_realtime.send_audio
+data:
+  audio_data: "<base64_encoded_pcm_audio>"
+```
+
+#### openai_realtime.start_listening
+Start the audio session.
+```yaml
+service: openai_realtime.start_listening
+```
+
+#### openai_realtime.stop_listening
+Stop audio processing.
+```yaml
+service: openai_realtime.stop_listening
+```
+
+#### openai_realtime.add_mcp_server
+Add an MCP server at runtime.
+```yaml
+service: openai_realtime.add_mcp_server
+data:
+  name: "my_server"
+  url: "https://mcp.example.com"
+  token: "optional_token"
+```
+
+#### openai_realtime.clear_conversation
+Clear the conversation history.
+```yaml
+service: openai_realtime.clear_conversation
+```
+
+### Example Commands
+
+- "Turn on the kitchen lights"
+- "What's the temperature in the living room?"
+- "Set the bedroom thermostat to 68 degrees"
+- "Lock all the doors"
+- "What lights are on?"
+
+## Lovelace Card (Browser Microphone)
+
+This integration includes a custom Lovelace card that captures audio directly from your browser's microphone and streams it to the OpenAI Realtime API.
+
+### Step 1: Add Lovelace Resource
+
+The integration tries to register the card automatically, but you may need to add it manually:
+
+1. Go to **Settings** → **Dashboards** → **⋮ (three dots)** → **Resources**
+2. Click **Add Resource**
+3. Enter:
+   - **URL**: `/api/openai_realtime/openai-realtime-card.js`
+   - **Resource type**: JavaScript Module
+4. Click **Create**
+
+Alternatively, add to your `configuration.yaml`:
+
+```yaml
+lovelace:
+  resources:
+    - url: /api/openai_realtime/openai-realtime-card.js
+      type: module
+```
+
+### Step 2: Add the Card to Dashboard
+
+Add this to your Lovelace dashboard:
+
+```yaml
+type: custom:openai-realtime-card
+title: OpenAI Realtime Voice
+show_transcript: true
+show_waveform: true
+```
+
+### Card Features
+
+- **Push-to-Talk**: Hold the microphone button to speak
+- **Audio Visualization**: Real-time waveform display while speaking
+- **Transcript**: Live display of your speech and AI responses
+- **Audio Playback**: Automatic playback of AI voice responses
+
+### Card Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | "OpenAI Realtime" | Card title |
+| `show_transcript` | boolean | true | Show conversation transcript |
+| `show_waveform` | boolean | true | Show audio waveform visualization |
+
+### Browser Requirements
+
+- Modern browser with Web Audio API support
+- Microphone permissions granted
+- HTTPS connection (required for microphone access)
+
+### Using with Voice Satellites
+
+For ESP-based voice satellites, configure them to use the custom STT/TTS providers created by this integration, or use the direct WebSocket API.
+
+## Audio Configuration
+
+The Realtime API uses PCM audio at 24kHz. The integration handles audio conversion automatically when used with Home Assistant's voice pipeline.
+
+### Supported Audio Formats
+- Input: PCM 16-bit, 24kHz
+- Output: PCM 16-bit, 24kHz
+
+## Voice Options
+
+Available voices:
+- `alloy` - Neutral, balanced
+- `echo` - Deep, resonant
+- `fable` - Warm, storytelling
+- `onyx` - Deep, authoritative
+- `nova` - Youthful, energetic
+- `shimmer` - Clear, expressive
+- `marin` - Warm, engaging
+
+## Pricing
+
+OpenAI Realtime API pricing (per 1M tokens):
+
+| Type | Input | Cached Input | Output |
+|------|-------|--------------|--------|
+| Text | $4.00 | $0.50 | $16.00 |
+| Audio | $32.00 | $0.50 | $64.00 |
+
+## Troubleshooting
+
+### Enable Debug Logging
+
+Add to your `configuration.yaml`:
+
+```yaml
+logger:
+  default: info
+  logs:
+    custom_components.openai_realtime: debug
+```
+
+Then restart Home Assistant.
+
+### Key Log Messages to Look For
+
+| Log Message | Meaning |
+|-------------|---------|
+| `Connected to OpenAI Realtime API` | WebSocket connected successfully |
+| `Session created: sess_XXX` | Session established with OpenAI |
+| `Updating session with X tools` | Tools are being registered |
+| `Session updated` | Tools registered successfully ✅ |
+| `API Error: ...` | Something went wrong ❌ |
+| `Function call received` | AI is calling a Home Assistant tool |
+| `Function result sent to OpenAI` | Tool execution completed |
+| `Registering event handlers including function_call handler` | WebSocket API handlers set up |
+
+### Common Issues
+
+#### API Error: Invalid type for 'session.max_response_output_tokens'
+This was a known issue where the token value was sent as a decimal. Update to the latest version.
+
+#### Tools not working / AI says it did something but nothing happened
+1. Check logs for `API Error` messages after `Updating session with X tools`
+2. Look for `Session updated` - if missing, session config failed and tools weren't registered
+3. Verify entity IDs exist in Home Assistant
+4. Check for `Function call received` in logs to confirm AI is trying to call tools
+
+#### No audio playback
+- Ensure your browser allows audio playback
+- Check browser console for errors (F12 → Console)
+- Try refreshing the page with Ctrl+Shift+R
+
+#### Microphone not working
+- Ensure HTTPS is enabled (required for microphone access)
+- Check browser permissions for microphone access
+- Try a different browser (Chrome recommended)
+
+#### "Not connected to OpenAI Realtime API"
+- Check your API key is valid
+- Ensure you have access to the Realtime API (not all accounts have it)
+- Check your internet connection
+
+#### Audio playing multiple times / overlapping
+- This was fixed in recent versions - update to latest
+- Clear browser cache and reload
+
+### Browser Console Debugging
+
+1. Open browser developer tools (F12)
+2. Go to Console tab
+3. Look for messages:
+   - `Subscribing to OpenAI Realtime events...` - Card is connecting
+   - `Subscribed successfully` - Connection established
+   - `Received event:` - Events coming from backend
+   - `Playing audio chunk` - Audio is being played
+
+### Check Integration Status
+
+1. Go to **Settings** → **Devices & Services**
+2. Find "OpenAI Realtime"
+3. Check if it shows any errors
+
+### View Full Logs
+
+```bash
+# In Home Assistant terminal or SSH
+tail -f /config/home-assistant.log | grep openai_realtime
+```
+
+### Test API Connection
+
+Try sending a text message via Developer Tools → Services:
+```yaml
+service: openai_realtime.send_message
+data:
+  message: "Hello, can you hear me?"
+```
+
+## Updating
+
+### Updating the Integration
+
+1. **Via HACS**: 
+   - Go to HACS → Integrations
+   - Find "OpenAI Realtime" and click "Update"
+   - Restart Home Assistant
+
+2. **Manual Update**:
+   - Replace the `custom_components/openai_realtime` folder with the new version
+   - Restart Home Assistant
+
+### Updating the JavaScript Card (Manual Cache Bust)
+
+The JS card version is automatically updated based on file modification time. However, browsers may cache the old version. Here's how to force an update:
+
+#### Method 1: Update Resource Version in Dashboard Settings (Recommended)
+
+1. Go to **Settings** → **Dashboards**
+2. Click the three-dot menu (⋮) → **Resources**
+3. Find the resource containing `/openai_realtime/openai-realtime-card.js`
+4. Click to edit it
+5. Change the URL version parameter:
+   ```
+   Before: /openai_realtime/openai-realtime-card.js?v=1733000000
+   After:  /openai_realtime/openai-realtime-card.js?v=1733100000
+   ```
+   (Just change the number to anything different)
+6. Click **Update**
+7. Hard refresh your browser: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (Mac)
+
+#### Method 2: Hard Refresh Browser
+
+- Windows/Linux: `Ctrl+Shift+R`
+- Mac: `Cmd+Shift+R`
+- Or open DevTools (F12) → Right-click Refresh → "Empty Cache and Hard Reload"
+
+#### Method 3: Delete and Re-add Resource
+
+1. Go to **Settings** → **Dashboards** → **Resources**
+2. Delete the OpenAI Realtime card resource
+3. Reload the integration:
+   - **Settings** → **Devices & Services** → **OpenAI Realtime** → **⋮** → **Reload**
+4. The resource will be re-added automatically with new version
+
+#### Method 4: Clear Browser Cache Completely
+
+1. Open browser settings
+2. Clear cached images and files
+3. Reload the dashboard
+
+### After Updating
+
+1. Clear browser cache or hard refresh (`Ctrl+Shift+R`)
+2. Reload the dashboard
+3. Check browser console (F12) for any errors
+4. Test the microphone button
+
+### Connection Issues
+- Verify your API key has Realtime API access
+- Check your network allows WebSocket connections
+- Review Home Assistant logs for detailed error messages
+
+### MCP Server Issues
+- Ensure the MCP server URL is accessible from Home Assistant
+- Verify authentication tokens are correct
+- Check MCP server logs for connection issues
+
+### Audio Issues
+- Ensure audio is in the correct format (PCM 24kHz)
+- Check voice assistant configuration
+- Verify microphone/speaker setup
+
+## Development
+
+### Local Development
+
+```bash
+# Clone the repository
+git clone https://github.com/your-repo/ha-openai-realtime.git
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Link to Home Assistant custom_components
+ln -s $(pwd)/custom_components/openai_realtime ~/.homeassistant/custom_components/
+```
+
+### Running Tests
+
+```bash
+pytest tests/
+```
+
+## License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+## Contributing
+
+Contributions are welcome! Please read our contributing guidelines and submit pull requests.
+
+## Changelog
+
+### 1.0.0
+- Initial release
+- OpenAI Realtime API integration
+- MCP server support
+- Home Assistant conversation agent
+- Built-in smart home tools
