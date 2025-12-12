@@ -91,6 +91,63 @@ url: https://my-mcp-server.example.com/mcp
 token: your-auth-token
 ```
 
+### Using Home Assistant's Built-in MCP Server (Recommended)
+
+Home Assistant has a built-in MCP Server integration that exposes all your entities and services to MCP clients. This is the easiest way to give the AI full access to your smart home.
+
+#### Step 1: Enable the MCP Server Integration
+
+1. Add to your `configuration.yaml`:
+   ```yaml
+   mcp_server:
+   ```
+
+2. Restart Home Assistant
+
+3. The MCP server will be available at:
+   ```
+   http://localhost:8123/api/mcp
+   ```
+   Or if using HTTPS:
+   ```
+   https://localhost:8123/api/mcp
+   ```
+
+For more details, see the [Home Assistant MCP Server documentation](https://www.home-assistant.io/integrations/mcp_server/).
+
+#### Step 2: Configure OpenAI Realtime to Use It
+
+When setting up or configuring the OpenAI Realtime integration:
+
+1. Go to **Settings** → **Devices & Services** → **OpenAI Realtime** → **Configure**
+2. Add MCP Server with:
+   - **Name**: `homeassistant` (or any name you prefer)
+   - **URL**: `http://localhost:8123/api/mcp`
+   - **Token**: Create a Long-Lived Access Token:
+     1. Go to your profile (click your name in sidebar)
+     2. Scroll to "Long-Lived Access Tokens"
+     3. Click "Create Token"
+     4. Copy the token and paste it here
+
+#### Example Configuration
+
+```yaml
+# MCP Server settings in OpenAI Realtime integration
+name: homeassistant
+url: http://localhost:8123/api/mcp
+token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...  # Your long-lived access token
+```
+
+#### What This Enables
+
+With the HA MCP Server connected, the AI gains access to:
+- All entity states and attributes
+- All available services
+- Area and device information
+- Much more comprehensive control than the built-in tools alone
+
+> **Note**: The built-in tools (`get_entity_state`, `call_service`, etc.) still work alongside MCP servers. MCP servers provide additional capabilities.
+
 ## Built-in Home Assistant Tools
 
 The integration provides these built-in tools for controlling Home Assistant:
