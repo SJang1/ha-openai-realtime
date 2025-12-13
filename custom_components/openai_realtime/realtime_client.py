@@ -135,6 +135,8 @@ class OpenAIRealtimeClient:
         self._listen_task: asyncio.Task | None = None
         self._response_futures: dict[str, asyncio.Future] = {}
         self._mcp_tools: dict[str, dict[str, Any]] = {}
+        self._response_in_progress = False  # Track if a response is currently active
+        self._pending_mcp_continuation = False  # Track if we need to continue after MCP completes
 
     @staticmethod
     def _sanitize_server_label(label: str) -> str:
@@ -284,6 +286,7 @@ class OpenAIRealtimeClient:
                 id=response_data.get("id", ""),
                 status=response_data.get("status", ""),
             )
+            self._response_in_progress = True  # Mark response as active
             _LOGGER.info("Response created: id=%s status=%s", response_data.get("id"), response_data.get("status"))
 
         elif event_type == EVENT_RESPONSE_OUTPUT_TEXT_DELTA:
@@ -313,12 +316,16 @@ class OpenAIRealtimeClient:
                 len(output_items),
             )
             
+            # Mark response as no longer active
+            self._response_in_progress = False
+            
             # Check if this response only contained MCP/function calls (no audio)
             has_audio = False
             has_mcp_call = False
+            has_function_call = False
             for output in output_items:
                 output_type = output.get("type", "")
-                _LOGGER.info("Response output item: type=%s role=%s", output_type, output.get("role"))
+                _LOGGER.debug("Response output item: type=%s role=%s", output_type, output.get("role"))
                 if output_type == "message":
                     # Check content for audio
                     for content in output.get("content", []):
@@ -327,13 +334,16 @@ class OpenAIRealtimeClient:
                 elif output_type == "mcp_call":
                     has_mcp_call = True
                 elif output_type == "function_call":
-                    has_mcp_call = True  # Treat function calls similarly
+                    has_function_call = True
             
-            # If we had MCP/function calls but no audio, trigger a continuation response
+            # For MCP calls, do NOT trigger continuation here
+            # The continuation will be triggered on mcp_call.completed event
+            # because mcp_call.in_progress arrives right after response.done
+            # and would block the continuation trigger
             if has_mcp_call and not has_audio:
-                _LOGGER.info("Response had MCP/function calls but no audio, triggering continuation...")
-                # Give OpenAI a moment then trigger response
-                asyncio.create_task(self._trigger_continuation_response())
+                _LOGGER.debug("Response had MCP calls, waiting for mcp_call.completed to trigger continuation")
+                # Store that we need continuation after MCP completes
+                self._pending_mcp_continuation = True
             
             if self._current_response:
                 self._current_response.status = response_data.get("status", STATUS_COMPLETED)
@@ -362,24 +372,27 @@ class OpenAIRealtimeClient:
             await self._handle_function_call(data)
 
         elif event_type == EVENT_RESPONSE_MCP_CALL_COMPLETED:
-            # MCP call completed - the output is stored internally by OpenAI
-            # and used for generating the response
+            # MCP call completed - trigger continuation to get AI response
             _LOGGER.debug(
-                "MCP call completed: item_id=%s, keys=%s",
+                "MCP call completed: item_id=%s",
                 data.get("item_id"),
-                list(data.keys()),
             )
+            # Reset response in progress flag since MCP processing is done
+            self._response_in_progress = False
             
-            # After MCP call completes, trigger a continuation response
-            # so the model can speak the results
-            _LOGGER.debug("Triggering continuation response after MCP call...")
-            asyncio.create_task(self._trigger_continuation_response())
+            # Trigger continuation if we were waiting for MCP to complete
+            if getattr(self, "_pending_mcp_continuation", False):
+                self._pending_mcp_continuation = False
+                _LOGGER.debug("MCP call completed, triggering continuation response...")
+                asyncio.create_task(self._trigger_continuation_response())
             
         elif event_type == EVENT_RESPONSE_MCP_CALL_FAILED:
             _LOGGER.error("MCP call failed: %s, error=%s", data.get("item_id"), data.get("error"))
 
         elif event_type == EVENT_RESPONSE_MCP_CALL_IN_PROGRESS:
-            _LOGGER.info(
+            # MCP call started - mark response as in progress to prevent duplicate triggers
+            self._response_in_progress = True
+            _LOGGER.debug(
                 "MCP call in progress: item_id=%s, server=%s, tool=%s",
                 data.get("item_id"),
                 data.get("call", {}).get("server_label"),
@@ -420,10 +433,15 @@ class OpenAIRealtimeClient:
         await asyncio.sleep(0.5)
         
         if not self._connected:
-            _LOGGER.warning("Not connected, cannot trigger continuation")
+            _LOGGER.debug("Not connected, cannot trigger continuation")
             return
         
-        _LOGGER.info("Triggering continuation response for MCP results")
+        # Don't trigger if a response is already in progress
+        if self._response_in_progress:
+            _LOGGER.debug("Response already in progress, skipping continuation trigger")
+            return
+        
+        _LOGGER.debug("Triggering continuation response for MCP results")
         try:
             await self.send({
                 "type": EVENT_RESPONSE_CREATE,

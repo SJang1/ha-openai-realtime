@@ -126,15 +126,35 @@ To add a Stdio server:
    ```
    Then configure as an SSE server with URL `http://your-server-ip:3000/sse`
 
-2. **Use Python-based MCP servers**
+2. **Use `uvx` with Python-based MCP servers** ✅ **Works in HASSIO!**
    
-   Python is available in Home Assistant. Use MCP servers written in Python:
+   If `uv`/`uvx` is not already installed on your Home Assistant OS, you can use an add-on to install it on every boot:
+   
+   👉 **[ha-uv Add-on](https://github.com/SJang1/ha-uv)** - Installs uv/uvx on Home Assistant OS
+   
+   Once installed, this integration automatically configures the required environment variables for `uv` and `uvx` commands to work in HASSIO:
+   
+   ```
+   Command: uvx
+   Args: mcp-server-fetch
+   ```
+   
+   The integration automatically sets:
+   - `UV_TOOL_DIR=/config/.uv/tools`
+   - `UV_CACHE_DIR=/config/.uv/cache`
+   - `TMPDIR=/config/.uv/tmp`
+   
+   This ensures uvx uses the `/config` directory (which has exec permissions) instead of `/tmp` (which has noexec in HASSIO).
+
+3. **Use Python module directly**
+   
+   If a package is installed in HA's Python environment:
    ```
    Command: python
    Args: -m,mcp_server_filesystem,/config
    ```
 
-3. **Run MCP servers in Docker containers**
+4. **Run MCP servers in Docker containers**
    
    If running HA in Docker (not HASSIO), add MCP server containers to your compose file:
    ```yaml
@@ -145,7 +165,7 @@ To add a Stdio server:
        - "3000:3000"
    ```
 
-4. **Create a Home Assistant Add-on**
+5. **Create a Home Assistant Add-on**
    
    Build a custom add-on that includes the MCP server. The add-on runs in its own container with all dependencies.
 

@@ -19,6 +19,7 @@ from .const import (
     CONF_MCP_SERVER_ENABLED,
     CONF_MCP_SERVER_ENV,
     CONF_MCP_SERVER_NAME,
+    CONF_MCP_SERVER_TIMEOUT,
     CONF_MCP_SERVER_TOKEN,
     CONF_MCP_SERVER_TYPE,
     CONF_MCP_SERVER_URL,
@@ -50,6 +51,7 @@ class MCPServerConfig:
     command: str = ""  # For stdio servers
     args: list[str] = field(default_factory=list)  # For stdio servers
     env: dict[str, str] = field(default_factory=dict)  # For stdio servers
+    timeout: int = 30  # Initialization timeout in seconds (for stdio servers)
     enabled: bool = True
 
     @classmethod
@@ -63,6 +65,7 @@ class MCPServerConfig:
             command=data.get(CONF_MCP_SERVER_COMMAND, ""),
             args=data.get(CONF_MCP_SERVER_ARGS, []),
             env=data.get(CONF_MCP_SERVER_ENV, {}),
+            timeout=data.get(CONF_MCP_SERVER_TIMEOUT, 30),
             enabled=data.get(CONF_MCP_SERVER_ENABLED, True),
         )
 
@@ -76,6 +79,7 @@ class MCPServerConfig:
             CONF_MCP_SERVER_COMMAND: self.command,
             CONF_MCP_SERVER_ARGS: self.args,
             CONF_MCP_SERVER_ENV: self.env,
+            CONF_MCP_SERVER_TIMEOUT: self.timeout,
             CONF_MCP_SERVER_ENABLED: self.enabled,
         }
 
@@ -231,11 +235,13 @@ class StdioTransport(MCPTransport):
         command: str,
         args: list[str] | None = None,
         env: dict[str, str] | None = None,
+        timeout: int = 30,
     ) -> None:
         """Initialize stdio transport."""
         self._command = command
         self._args = args or []
         self._env = env or {}
+        self._timeout = timeout
         self._process: asyncio.subprocess.Process | None = None
         self._request_id = 0
         self._connected = False
@@ -248,7 +254,31 @@ class StdioTransport(MCPTransport):
         try:
             # Prepare environment
             process_env = os.environ.copy()
+
+            # Auto-add UV environment variables for uv/uvx commands in HASSIO
+            # This avoids permission issues with /tmp noexec mount
+            if self._command in ("uv", "uvx"):
+                uv_defaults = {
+                    "UV_TOOL_DIR": "/config/.uv/tools",
+                    "UV_CACHE_DIR": "/config/.uv/cache",
+                    "TMPDIR": "/config/.uv/tmp",
+                }
+                for key, default_value in uv_defaults.items():
+                    if key not in self._env:
+                        self._env[key] = default_value
+                        _LOGGER.debug("Auto-set %s=%s for uvx/uv command", key, default_value)
+
             process_env.update(self._env)
+
+            # Create directories for environment variables that look like paths
+            # This helps with uvx/uv which need UV_TOOL_DIR, UV_CACHE_DIR, TMPDIR
+            for key, value in self._env.items():
+                if key in ("UV_TOOL_DIR", "UV_CACHE_DIR", "TMPDIR", "UV_TOOL_BIN_DIR"):
+                    try:
+                        os.makedirs(value, exist_ok=True)
+                        _LOGGER.debug("Created directory for %s: %s", key, value)
+                    except Exception as e:
+                        _LOGGER.warning("Failed to create directory %s: %s", value, e)
 
             # Start the process
             cmd = [self._command] + self._args
@@ -262,10 +292,14 @@ class StdioTransport(MCPTransport):
                 env=process_env,
             )
 
-            # Start reading responses
+            # Start reading responses and stderr
             self._read_task = asyncio.create_task(self._read_responses())
+            # Also read stderr to prevent buffer blocking
+            asyncio.create_task(self._read_stderr())
 
-            # Send initialize request
+            _LOGGER.debug("Sending MCP initialize request (timeout: %ds)", self._timeout)
+
+            # Send initialize request with configurable timeout
             result = await self.send_request(
                 "initialize",
                 {
@@ -275,8 +309,11 @@ class StdioTransport(MCPTransport):
                         "name": "home-assistant-openai-realtime",
                         "version": "1.0.0"
                     }
-                }
+                },
+                timeout=float(self._timeout),
             )
+
+            _LOGGER.debug("MCP initialize response: %s", result)
 
             if "error" not in result:
                 # Send initialized notification
@@ -322,28 +359,55 @@ class StdioTransport(MCPTransport):
     async def _read_responses(self) -> None:
         """Read responses from the process stdout."""
         if not self._process or not self._process.stdout:
+            _LOGGER.error("No process or stdout available for reading")
             return
 
+        _LOGGER.debug("Started reading MCP server stdout")
         try:
             while True:
                 line = await self._process.stdout.readline()
                 if not line:
+                    _LOGGER.debug("MCP server stdout closed (EOF)")
                     break
 
+                _LOGGER.debug("MCP server stdout raw: %s", line[:200])
                 try:
                     response = json.loads(line.decode())
                     request_id = response.get("id")
+                    _LOGGER.debug("MCP response received, id=%s, keys=%s", request_id, list(response.keys()))
                     if request_id and request_id in self._response_futures:
                         future = self._response_futures.pop(request_id)
                         if not future.done():
                             future.set_result(response)
-                except json.JSONDecodeError:
+                    else:
+                        _LOGGER.debug("No pending future for response id=%s", request_id)
+                except json.JSONDecodeError as e:
+                    _LOGGER.debug("JSON decode error: %s, line: %s", e, line[:100])
                     continue
 
         except asyncio.CancelledError:
             pass
         except Exception as e:
             _LOGGER.error("Error reading stdio responses: %s", e)
+
+    async def _read_stderr(self) -> None:
+        """Read and log stderr from the process to prevent buffer blocking."""
+        if not self._process or not self._process.stderr:
+            return
+
+        try:
+            while True:
+                line = await self._process.stderr.readline()
+                if not line:
+                    break
+                # Log stderr output for debugging
+                stderr_text = line.decode().strip()
+                if stderr_text:
+                    _LOGGER.debug("MCP server stderr: %s", stderr_text)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            _LOGGER.debug("Error reading stderr: %s", e)
 
     async def _send_notification(
         self, method: str, params: dict[str, Any]
@@ -366,9 +430,18 @@ class StdioTransport(MCPTransport):
             _LOGGER.error("Error sending notification: %s", e)
 
     async def send_request(
-        self, method: str, params: dict[str, Any] | None = None
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout: float = 30.0,
     ) -> dict[str, Any]:
-        """Send a JSON-RPC request and wait for response."""
+        """Send a JSON-RPC request and wait for response.
+        
+        Args:
+            method: The JSON-RPC method to call
+            params: Optional parameters for the method
+            timeout: Timeout in seconds (default 30s, use longer for init)
+        """
         if not self._process or not self._process.stdin:
             return {"error": {"code": -1, "message": "Process not running"}}
 
@@ -391,12 +464,12 @@ class StdioTransport(MCPTransport):
                 await self._process.stdin.drain()
 
                 # Wait for response with timeout
-                result = await asyncio.wait_for(future, timeout=30.0)
+                result = await asyncio.wait_for(future, timeout=timeout)
                 return result
 
             except asyncio.TimeoutError:
                 self._response_futures.pop(request_id, None)
-                return {"error": {"code": -1, "message": "Request timeout"}}
+                return {"error": {"code": -1, "message": f"Request timeout after {timeout}s"}}
             except Exception as e:
                 self._response_futures.pop(request_id, None)
                 return {"error": {"code": -1, "message": str(e)}}
@@ -495,6 +568,7 @@ class MCPServerHandler:
                 command=server.config.command,
                 args=server.config.args,
                 env=server.config.env,
+                timeout=server.config.timeout,
             )
         else:  # SSE is default
             return SSETransport(
