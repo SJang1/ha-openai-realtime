@@ -362,13 +362,29 @@ class OpenAIRealtimeClient:
             await self._handle_function_call(data)
 
         elif event_type == EVENT_RESPONSE_MCP_CALL_COMPLETED:
-            _LOGGER.info("MCP call completed: %s, output=%s", data.get("item_id"), str(data.get("output", {}))[:200] if data.get("output") else None)
-            # After MCP call completes, we may need to trigger a new response
-            # to get the model to speak the result
-            # This is done automatically by OpenAI but sometimes needs a nudge
+            # MCP call completed - the output is stored internally by OpenAI
+            # and used for generating the response
+            _LOGGER.debug(
+                "MCP call completed: item_id=%s, keys=%s",
+                data.get("item_id"),
+                list(data.keys()),
+            )
+            
+            # After MCP call completes, trigger a continuation response
+            # so the model can speak the results
+            _LOGGER.debug("Triggering continuation response after MCP call...")
+            asyncio.create_task(self._trigger_continuation_response())
             
         elif event_type == EVENT_RESPONSE_MCP_CALL_FAILED:
             _LOGGER.error("MCP call failed: %s, error=%s", data.get("item_id"), data.get("error"))
+
+        elif event_type == EVENT_RESPONSE_MCP_CALL_IN_PROGRESS:
+            _LOGGER.info(
+                "MCP call in progress: item_id=%s, server=%s, tool=%s",
+                data.get("item_id"),
+                data.get("call", {}).get("server_label"),
+                data.get("call", {}).get("name"),
+            )
 
         elif event_type == EVENT_MCP_LIST_TOOLS_COMPLETED:
             _LOGGER.info("MCP tools listed: %s", data.get("item_id"))
