@@ -12,10 +12,23 @@ CONF_MCP_SERVERS: Final = "mcp_servers"
 CONF_MCP_SERVER_URL: Final = "url"
 CONF_MCP_SERVER_NAME: Final = "name"
 CONF_MCP_SERVER_TOKEN: Final = "token"
+CONF_MCP_SERVER_TYPE: Final = "server_type"
+CONF_MCP_SERVER_COMMAND: Final = "command"
+CONF_MCP_SERVER_ARGS: Final = "args"
+CONF_MCP_SERVER_ENV: Final = "env"
+CONF_MCP_SERVER_ENABLED: Final = "enabled"
 CONF_TEMPERATURE: Final = "temperature"
 CONF_MAX_OUTPUT_TOKENS: Final = "max_output_tokens"
 CONF_TURN_DETECTION: Final = "turn_detection"
 CONF_INPUT_AUDIO_TRANSCRIPTION: Final = "input_audio_transcription"
+
+# MCP Server Types
+MCP_SERVER_TYPE_SSE: Final = "sse"
+MCP_SERVER_TYPE_STDIO: Final = "stdio"
+MCP_SERVER_TYPES: Final = [
+    MCP_SERVER_TYPE_SSE,
+    MCP_SERVER_TYPE_STDIO,
+]
 
 # Default values
 DEFAULT_MODEL: Final = "gpt-realtime"

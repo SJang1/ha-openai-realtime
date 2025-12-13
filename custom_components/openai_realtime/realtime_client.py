@@ -16,8 +16,10 @@ from aiohttp import WSMsgType
 from .const import (
     AUDIO_FORMAT,
     AUDIO_SAMPLE_RATE,
+    CONF_MCP_SERVER_ENABLED,
     CONF_MCP_SERVER_NAME,
     CONF_MCP_SERVER_TOKEN,
+    CONF_MCP_SERVER_TYPE,
     CONF_MCP_SERVER_URL,
     DEFAULT_INSTRUCTIONS,
     DEFAULT_MAX_OUTPUT_TOKENS,
@@ -55,6 +57,7 @@ from .const import (
     EVENT_SESSION_CREATED,
     EVENT_SESSION_UPDATE,
     EVENT_SESSION_UPDATED,
+    MCP_SERVER_TYPE_SSE,
     OPENAI_REALTIME_WS_URL,
     ROLE_ASSISTANT,
     ROLE_USER,
@@ -74,9 +77,18 @@ class RealtimeSession:
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
     temperature: float = 0.8
     tools: list[dict[str, Any]] = field(default_factory=list)
-    mcp_servers: list[dict[str, str]] = field(default_factory=list)
+    mcp_servers: list[dict[str, Any]] = field(default_factory=list)
     turn_detection: dict[str, Any] | None = None
     input_audio_transcription: dict[str, Any] | None = None
+
+    def get_sse_servers(self) -> list[dict[str, Any]]:
+        """Get only SSE MCP servers (can be used with OpenAI Realtime API)."""
+        return [
+            s for s in self.mcp_servers
+            if s.get(CONF_MCP_SERVER_TYPE, MCP_SERVER_TYPE_SSE) == MCP_SERVER_TYPE_SSE
+            and s.get(CONF_MCP_SERVER_ENABLED, True)
+            and s.get(CONF_MCP_SERVER_URL)
+        ]
 
 
 @dataclass
@@ -123,6 +135,19 @@ class OpenAIRealtimeClient:
         self._listen_task: asyncio.Task | None = None
         self._response_futures: dict[str, asyncio.Future] = {}
         self._mcp_tools: dict[str, dict[str, Any]] = {}
+
+    @staticmethod
+    def _sanitize_server_label(label: str) -> str:
+        """Sanitize server label to match OpenAI pattern ^[a-zA-Z0-9_-]+$."""
+        import re
+        # Replace spaces and other invalid characters with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', label)
+        # Remove consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
+        # Ensure non-empty
+        return sanitized or "mcp_server"
 
     @property
     def connected(self) -> bool:
@@ -259,6 +284,7 @@ class OpenAIRealtimeClient:
                 id=response_data.get("id", ""),
                 status=response_data.get("status", ""),
             )
+            _LOGGER.info("Response created: id=%s status=%s", response_data.get("id"), response_data.get("status"))
 
         elif event_type == EVENT_RESPONSE_OUTPUT_TEXT_DELTA:
             if self._current_response:
@@ -279,11 +305,41 @@ class OpenAIRealtimeClient:
 
         elif event_type == EVENT_RESPONSE_DONE:
             response_data = data.get("response", {})
+            output_items = response_data.get("output", [])
+            _LOGGER.info(
+                "Response done: id=%s status=%s output_count=%d",
+                response_data.get("id"),
+                response_data.get("status"),
+                len(output_items),
+            )
+            
+            # Check if this response only contained MCP/function calls (no audio)
+            has_audio = False
+            has_mcp_call = False
+            for output in output_items:
+                output_type = output.get("type", "")
+                _LOGGER.info("Response output item: type=%s role=%s", output_type, output.get("role"))
+                if output_type == "message":
+                    # Check content for audio
+                    for content in output.get("content", []):
+                        if content.get("type") == "audio":
+                            has_audio = True
+                elif output_type == "mcp_call":
+                    has_mcp_call = True
+                elif output_type == "function_call":
+                    has_mcp_call = True  # Treat function calls similarly
+            
+            # If we had MCP/function calls but no audio, trigger a continuation response
+            if has_mcp_call and not has_audio:
+                _LOGGER.info("Response had MCP/function calls but no audio, triggering continuation...")
+                # Give OpenAI a moment then trigger response
+                asyncio.create_task(self._trigger_continuation_response())
+            
             if self._current_response:
                 self._current_response.status = response_data.get("status", STATUS_COMPLETED)
 
                 # Extract output items
-                for output in response_data.get("output", []):
+                for output in output_items:
                     item = ConversationItem(
                         id=output.get("id", ""),
                         type=output.get("type", ""),
@@ -306,13 +362,25 @@ class OpenAIRealtimeClient:
             await self._handle_function_call(data)
 
         elif event_type == EVENT_RESPONSE_MCP_CALL_COMPLETED:
-            _LOGGER.info("MCP call completed: %s", data.get("item_id"))
-
+            _LOGGER.info("MCP call completed: %s, output=%s", data.get("item_id"), str(data.get("output", {}))[:200] if data.get("output") else None)
+            # After MCP call completes, we may need to trigger a new response
+            # to get the model to speak the result
+            # This is done automatically by OpenAI but sometimes needs a nudge
+            
         elif event_type == EVENT_RESPONSE_MCP_CALL_FAILED:
-            _LOGGER.error("MCP call failed: %s", data.get("item_id"))
+            _LOGGER.error("MCP call failed: %s, error=%s", data.get("item_id"), data.get("error"))
 
         elif event_type == EVENT_MCP_LIST_TOOLS_COMPLETED:
             _LOGGER.info("MCP tools listed: %s", data.get("item_id"))
+
+        elif event_type == EVENT_RESPONSE_OUTPUT_ITEM_DONE:
+            item = data.get("item", {})
+            _LOGGER.info(
+                "Output item done: id=%s type=%s role=%s",
+                item.get("id"),
+                item.get("type"),
+                item.get("role"),
+            )
 
         elif event_type == EVENT_CONVERSATION_ITEM_ADDED:
             item_data = data.get("item", {})
@@ -324,6 +392,28 @@ class OpenAIRealtimeClient:
                 status=item_data.get("status", "completed"),
             )
             self._conversation_items.append(item)
+
+    async def _trigger_continuation_response(self) -> None:
+        """Trigger a continuation response after MCP/function calls.
+        
+        When a response only contains tool calls and no audio output,
+        we need to explicitly trigger OpenAI to generate the follow-up
+        audio response with the tool results.
+        """
+        # Small delay to let MCP results be processed
+        await asyncio.sleep(0.5)
+        
+        if not self._connected:
+            _LOGGER.warning("Not connected, cannot trigger continuation")
+            return
+        
+        _LOGGER.info("Triggering continuation response for MCP results")
+        try:
+            await self.send({
+                "type": EVENT_RESPONSE_CREATE,
+            })
+        except Exception as e:
+            _LOGGER.error("Error triggering continuation response: %s", e)
 
     async def _handle_function_call(self, data: dict[str, Any]) -> None:
         """Handle a function call from the model."""
@@ -391,13 +481,33 @@ class OpenAIRealtimeClient:
             "max_response_output_tokens": max_tokens_value,
         }
 
-        # Add MCP servers if configured
-        if self._session_config.mcp_servers:
+        # Add MCP servers if configured (only SSE servers can be used directly)
+        sse_servers = self._session_config.get_sse_servers()
+        _LOGGER.info(
+            "MCP servers in config: %d total, %d SSE servers eligible",
+            len(self._session_config.mcp_servers),
+            len(sse_servers),
+        )
+        for i, server in enumerate(self._session_config.mcp_servers):
+            _LOGGER.debug(
+                "MCP server %d: name=%s, type=%s, enabled=%s, url=%s",
+                i,
+                server.get(CONF_MCP_SERVER_NAME),
+                server.get(CONF_MCP_SERVER_TYPE),
+                server.get(CONF_MCP_SERVER_ENABLED),
+                server.get(CONF_MCP_SERVER_URL),
+            )
+        
+        if sse_servers:
             mcp_tools: list[dict[str, Any]] = []
-            for server in self._session_config.mcp_servers:
+            for server in sse_servers:
+                # Sanitize server_label to match pattern ^[a-zA-Z0-9_-]+$
+                raw_label = server.get(CONF_MCP_SERVER_NAME, "mcp_server")
+                sanitized_label = self._sanitize_server_label(raw_label)
+                
                 mcp_tool: dict[str, Any] = {
                     "type": "mcp",
-                    "server_label": server.get(CONF_MCP_SERVER_NAME, "mcp_server"),
+                    "server_label": sanitized_label,
                     "server_url": server.get(CONF_MCP_SERVER_URL, ""),
                     "require_approval": "never",
                 }
@@ -406,12 +516,16 @@ class OpenAIRealtimeClient:
                         "Authorization": f"Bearer {server[CONF_MCP_SERVER_TOKEN]}"
                     }
                 mcp_tools.append(mcp_tool)
+                _LOGGER.info("Adding MCP tool: %s -> %s", sanitized_label, server.get(CONF_MCP_SERVER_URL))
 
             session_update["tools"] = self._session_config.tools + mcp_tools
 
-        _LOGGER.info("Updating session with %d tools: %s", 
-                     len(session_update.get("tools", [])),
-                     [t.get("name") for t in session_update.get("tools", []) if t.get("type") == "function"])
+        _LOGGER.info(
+            "Updating session with %d tools: functions=%s, mcp=%s", 
+            len(session_update.get("tools", [])),
+            [t.get("name") for t in session_update.get("tools", []) if t.get("type") == "function"],
+            [t.get("server_label") for t in session_update.get("tools", []) if t.get("type") == "mcp"],
+        )
 
         await self.send({
             "type": EVENT_SESSION_UPDATE,

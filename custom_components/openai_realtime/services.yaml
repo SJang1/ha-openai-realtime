@@ -31,7 +31,7 @@ stop_listening:
 
 add_mcp_server:
   name: Add MCP Server
-  description: Add an MCP server at runtime.
+  description: Add an MCP server at runtime. Supports both SSE (HTTP) and stdio (local process) servers.
   fields:
     name:
       name: Server Name
@@ -40,19 +40,50 @@ add_mcp_server:
       example: "my_mcp_server"
       selector:
         text:
+    server_type:
+      name: Server Type
+      description: The type of MCP server (sse for HTTP servers, stdio for local process servers).
+      required: true
+      default: "sse"
+      selector:
+        select:
+          options:
+            - "sse"
+            - "stdio"
     url:
       name: Server URL
-      description: The URL of the MCP server.
-      required: true
-      example: "https://mcp.example.com"
+      description: The URL of the SSE MCP server (required for SSE type).
+      required: false
+      example: "https://mcp.example.com/sse"
       selector:
         text:
     token:
       name: Authentication Token
-      description: Optional authentication token.
+      description: Optional authentication token for SSE servers.
       required: false
       selector:
         text:
+    command:
+      name: Command
+      description: The command to run for stdio servers (e.g., npx, python, node).
+      required: false
+      example: "npx"
+      selector:
+        text:
+    args:
+      name: Arguments
+      description: List of arguments for the stdio command.
+      required: false
+      example: ["@modelcontextprotocol/server-filesystem", "/home/user/data"]
+      selector:
+        object:
+    env:
+      name: Environment Variables
+      description: Environment variables for the stdio process.
+      required: false
+      example: {"API_KEY": "xxx"}
+      selector:
+        object:
 
 remove_mcp_server:
   name: Remove MCP Server
@@ -64,6 +95,14 @@ remove_mcp_server:
       required: true
       selector:
         text:
+
+list_mcp_servers:
+  name: List MCP Servers
+  description: List all configured MCP servers and their status.
+
+connect_mcp_servers:
+  name: Connect MCP Servers
+  description: Connect to all configured MCP servers and fetch their available tools.
 
 clear_conversation:
   name: Clear Conversation

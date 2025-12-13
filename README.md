@@ -21,7 +21,7 @@ Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this inte
 ```
 ┌─────────────────────────────────────────────────────────┐
 │ Default HA Pipeline                                      │
-│ ┌─────┐    ┌────────────┐    ┌─────┐                    │
+│ ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐         │
 │ │ Mic │───▶│ STT Engine │───▶│ AI  │───▶│ TTS │───▶🔊  │
 │ └─────┘    └────────────┘    └─────┘    └─────┘         │
 └─────────────────────────────────────────────────────────┘
@@ -74,24 +74,84 @@ Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this inte
 
 ## MCP Server Configuration
 
-MCP (Model Context Protocol) servers allow you to extend the AI's capabilities with external tools.
+MCP (Model Context Protocol) servers allow you to extend the AI's capabilities with external tools. This integration supports two types of MCP servers:
 
-To add an MCP server:
-1. During setup or in options, provide:
-   - **Server Name**: A unique identifier for the server
-   - **Server URL**: The HTTP/HTTPS endpoint of the MCP server
+### MCP Server Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| **SSE** | HTTP-based Server-Sent Events | Remote servers, cloud-hosted MCP services |
+| **Stdio** | Local subprocess communication | Local tools, CLI-based MCP servers |
+
+### SSE Servers (Recommended for HASSIO)
+
+SSE servers communicate over HTTP/HTTPS and are passed directly to OpenAI's Realtime API. This is the recommended approach for Home Assistant OS (HASSIO) installations.
+
+To add an SSE server:
+1. Go to integration options → **Add SSE Server**
+2. Configure:
+   - **Server Name**: A unique identifier (letters, numbers, underscores, hyphens only)
+   - **Server URL**: The HTTP/HTTPS endpoint (e.g., `http://localhost:8123/api/mcp`)
    - **Token** (optional): Authentication token if required
 
-### Example MCP Server Setup
+### Stdio Servers
 
-```yaml
-# Example MCP server configuration
-name: my_mcp_server
-url: https://my-mcp-server.example.com/mcp
-token: your-auth-token
-```
+Stdio servers run as local subprocesses and communicate via stdin/stdout. The integration connects to these servers locally and registers their tools as function calls.
 
-### Using Home Assistant's Built-in MCP Server (Recommended)
+> ⚠️ **Important: Stdio servers require the command to be available on the Home Assistant host system.**
+
+To add a Stdio server:
+1. Go to integration options → **Add Stdio Server**
+2. Configure:
+   - **Server Name**: A unique identifier
+   - **Command**: The executable to run (e.g., `python`, `node`, `/usr/bin/my-mcp-server`)
+   - **Arguments**: Comma-separated arguments (e.g., `-m,mcp_server,--port,3000`)
+   - **Environment Variables**: Comma-separated key=value pairs (e.g., `API_KEY=xxx,DEBUG=true`)
+
+### ⚠️ HASSIO / Home Assistant OS Limitations
+
+**Node.js (`npx`, `node`) commands will NOT work on Home Assistant OS (HASSIO)** because:
+- HASSIO is a minimal, containerized Linux environment
+- Node.js is not pre-installed and cannot be easily added
+- The host OS is read-only and doesn't support package installation
+
+#### Workarounds for HASSIO Users:
+
+1. **Use SSE mode instead of Stdio** (Recommended)
+   
+   Many MCP servers support both modes. Run the server on a separate machine with Node.js and connect via SSE:
+   ```bash
+   # On a machine with Node.js (not HASSIO)
+   npx @anthropic/mcp-server-brightdata --transport sse --port 3000
+   ```
+   Then configure as an SSE server with URL `http://your-server-ip:3000/sse`
+
+2. **Use Python-based MCP servers**
+   
+   Python is available in Home Assistant. Use MCP servers written in Python:
+   ```
+   Command: python
+   Args: -m,mcp_server_filesystem,/config
+   ```
+
+3. **Run MCP servers in Docker containers**
+   
+   If running HA in Docker (not HASSIO), add MCP server containers to your compose file:
+   ```yaml
+   mcp-server:
+     image: node:20-alpine
+     command: npx @anthropic/mcp-server-example --transport sse --port 3000
+     ports:
+       - "3000:3000"
+   ```
+
+4. **Create a Home Assistant Add-on**
+   
+   Build a custom add-on that includes the MCP server. The add-on runs in its own container with all dependencies.
+
+### Example MCP Server Configurations
+
+#### Home Assistant's Built-in MCP Server (SSE)
 
 Home Assistant has a built-in MCP Server integration that exposes all your entities and services to MCP clients. This is the easiest way to give the AI full access to your smart home.
 
@@ -147,6 +207,59 @@ With the HA MCP Server connected, the AI gains access to:
 - Much more comprehensive control than the built-in tools alone
 
 > **Note**: The built-in tools (`get_entity_state`, `call_service`, etc.) still work alongside MCP servers. MCP servers provide additional capabilities.
+
+#### Bright Data MCP Server (SSE - External Machine)
+
+[Bright Data MCP Server](https://github.com/anthropics/mcp-servers) provides web scraping capabilities.
+
+**On a machine with Node.js:**
+```bash
+npx @anthropic/mcp-server-brightdata --transport sse --port 3001
+```
+
+**In OpenAI Realtime integration:**
+- **Type**: SSE
+- **Name**: `bright_data`
+- **URL**: `http://your-nodejs-machine:3001/sse`
+- **Token**: Your Bright Data API key (if required)
+
+#### Filesystem MCP Server (Stdio - Python)
+
+For HA Core installations with Python available:
+
+- **Type**: Stdio
+- **Name**: `filesystem`
+- **Command**: `python`
+- **Args**: `-m,mcp_server_filesystem,/config`
+
+#### Custom MCP Server (Stdio - Local Binary)
+
+If you have a compiled MCP server binary:
+
+- **Type**: Stdio
+- **Name**: `my_custom_server`
+- **Command**: `/usr/local/bin/my-mcp-server`
+- **Args**: `--config,/config/mcp/config.yaml`
+- **Env**: `DEBUG=true,LOG_LEVEL=info`
+
+### Managing MCP Servers
+
+You can manage MCP servers through the integration options:
+
+1. Go to **Settings** → **Devices & Services** → **OpenAI Realtime** → **Configure**
+2. Choose from:
+   - **Add SSE Server**: Add a new HTTP-based MCP server
+   - **Add Stdio Server**: Add a new subprocess-based MCP server
+   - **Manage Existing Servers**: Edit, enable/disable, or delete servers
+3. After making changes, the integration will reload automatically
+
+### MCP Server Naming Rules
+
+Server names must match the pattern `^[a-zA-Z0-9_-]+$`:
+- ✅ `home_assistant`, `bright-data`, `myServer1`
+- ❌ `Home Assistant`, `my server`, `서버이름`
+
+Spaces and special characters in names will be automatically converted to underscores.
 
 ## Built-in Home Assistant Tools
 
@@ -421,6 +534,32 @@ This was a known issue where the token value was sent as a decimal. Update to th
 #### Audio playing multiple times / overlapping
 - This was fixed in recent versions - update to latest
 - Clear browser cache and reload
+
+### MCP Server Issues
+
+#### Stdio server not working on HASSIO
+- **Cause**: Node.js (`npx`, `node`) is not available on Home Assistant OS
+- **Solution**: Use SSE mode instead. Run the MCP server on a separate machine and connect via HTTP
+
+#### MCP server "command not found"
+- **Cause**: The command is not installed or not in PATH
+- **Solution**: 
+  - Use full path to executable (e.g., `/usr/bin/python3` instead of `python`)
+  - For Python MCP servers, ensure the module is installed: `pip install mcp-server-xxx`
+
+#### MCP tools not appearing in AI responses
+1. Check logs for `Loading X MCP servers from config`
+2. For stdio servers, look for `Connected to stdio MCP server X, found Y tools`
+3. Verify the server is enabled in options
+4. Check for connection errors in logs
+
+#### MCP call succeeds but no audio response
+- **Cause**: After MCP calls, OpenAI may need a trigger to generate audio
+- **Solution**: This is handled automatically in recent versions. Update to latest and restart.
+
+#### "Server not found" error when calling MCP tool
+- **Cause**: Server name in function call doesn't match configured server
+- **Solution**: Check server name for special characters. Names are sanitized (spaces → underscores)
 
 ### Browser Console Debugging
 

@@ -323,6 +323,30 @@ async def websocket_realtime_subscribe(
         
         _LOGGER.info("Function call received in websocket_api: name=%s call_id=%s args=%s", name, call_id, arguments)
         
+        # Check if this is an MCP server function call (format: server_name__tool_name)
+        if "__" in name:
+            mcp_handler = _get_mcp_handler(hass)
+            if mcp_handler:
+                parsed = mcp_handler.parse_function_name(name)
+                if parsed:
+                    server_name, tool_name = parsed
+                    _LOGGER.info("Calling MCP server tool: server=%s tool=%s", server_name, tool_name)
+                    try:
+                        result = await mcp_handler.call_tool(server_name, tool_name, arguments)
+                        _LOGGER.info("MCP tool result: %s", result)
+                        
+                        if client.connected:
+                            await client.send_function_result(call_id, result)
+                            _LOGGER.info("MCP tool result sent to OpenAI")
+                        else:
+                            _LOGGER.warning("Client not connected, cannot send MCP tool result")
+                        return
+                    except Exception as e:
+                        _LOGGER.error("Error executing MCP tool %s: %s", name, e)
+                        if client.connected:
+                            await client.send_function_result(call_id, {"error": str(e)})
+                        return
+        
         # Execute the function using HomeAssistantMCPTools
         ha_tools = _get_ha_tools(hass)
         _LOGGER.info("ha_tools retrieved: %s", ha_tools is not None)
@@ -412,5 +436,22 @@ def _get_ha_tools(hass: HomeAssistant) -> HomeAssistantMCPTools | None:
             ha_tools = HomeAssistantMCPTools(hass)
             data["ha_tools"] = ha_tools
             return ha_tools
+
+    return None
+
+
+def _get_mcp_handler(hass: HomeAssistant):
+    """Get MCP handler instance."""
+    from .mcp_handler import MCPServerHandler
+    
+    if DOMAIN not in hass.data:
+        return None
+
+    for entry_id, data in hass.data[DOMAIN].items():
+        # Skip special keys and non-dict entries
+        if entry_id.startswith("_") or not isinstance(data, dict):
+            continue
+        if "mcp_handler" in data:
+            return data["mcp_handler"]
 
     return None

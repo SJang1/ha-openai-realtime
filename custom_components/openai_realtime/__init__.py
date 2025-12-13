@@ -15,6 +15,14 @@ from .const import (
     CONF_API_KEY,
     CONF_INSTRUCTIONS,
     CONF_MAX_OUTPUT_TOKENS,
+    CONF_MCP_SERVER_ARGS,
+    CONF_MCP_SERVER_COMMAND,
+    CONF_MCP_SERVER_ENABLED,
+    CONF_MCP_SERVER_ENV,
+    CONF_MCP_SERVER_NAME,
+    CONF_MCP_SERVER_TOKEN,
+    CONF_MCP_SERVER_TYPE,
+    CONF_MCP_SERVER_URL,
     CONF_MCP_SERVERS,
     CONF_MODEL,
     CONF_VOICE,
@@ -23,6 +31,8 @@ from .const import (
     DEFAULT_MODEL,
     DEFAULT_VOICE,
     DOMAIN,
+    MCP_SERVER_TYPE_SSE,
+    MCP_SERVER_TYPE_STDIO,
 )
 from .conversation import (
     OpenAIRealtimeConversationAgent,
@@ -46,6 +56,8 @@ PLATFORMS: list[Platform] = [
 SERVICE_SEND_MESSAGE = "send_message"
 SERVICE_ADD_MCP_SERVER = "add_mcp_server"
 SERVICE_REMOVE_MCP_SERVER = "remove_mcp_server"
+SERVICE_LIST_MCP_SERVERS = "list_mcp_servers"
+SERVICE_CONNECT_MCP_SERVERS = "connect_mcp_servers"
 SERVICE_CLEAR_CONVERSATION = "clear_conversation"
 SERVICE_SEND_AUDIO = "send_audio"
 SERVICE_START_LISTENING = "start_listening"
@@ -61,8 +73,12 @@ SEND_AUDIO_SCHEMA = vol.Schema({
 
 ADD_MCP_SERVER_SCHEMA = vol.Schema({
     vol.Required("name"): cv.string,
-    vol.Required("url"): cv.url,
+    vol.Required("server_type"): vol.In([MCP_SERVER_TYPE_SSE, MCP_SERVER_TYPE_STDIO]),
+    vol.Optional("url"): cv.url,
     vol.Optional("token"): cv.string,
+    vol.Optional("command"): cv.string,
+    vol.Optional("args"): vol.All(cv.ensure_list, [cv.string]),
+    vol.Optional("env"): dict,
 })
 
 REMOVE_MCP_SERVER_SCHEMA = vol.Schema({
@@ -84,13 +100,50 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     # Add configured MCP servers
     mcp_servers = config.get(CONF_MCP_SERVERS, [])
-    for server_config in mcp_servers:
+    _LOGGER.info("Loading %d MCP servers from config", len(mcp_servers))
+    for i, server_config in enumerate(mcp_servers):
+        _LOGGER.info(
+            "MCP server %d: %s (type=%s, enabled=%s)",
+            i,
+            server_config.get(CONF_MCP_SERVER_NAME),
+            server_config.get(CONF_MCP_SERVER_TYPE),
+            server_config.get(CONF_MCP_SERVER_ENABLED, True),
+        )
         mcp_handler.add_server_from_config(server_config)
+
+    # Connect to stdio MCP servers and get their tools
+    # (SSE servers are passed directly to OpenAI Realtime API)
+    stdio_servers = mcp_handler.get_stdio_servers()
+    if stdio_servers:
+        _LOGGER.info("Connecting to %d stdio MCP servers...", len(stdio_servers))
+        for server in stdio_servers:
+            try:
+                connected = await mcp_handler.connect_server(server.name)
+                if connected:
+                    _LOGGER.info(
+                        "Connected to stdio MCP server %s, found %d tools",
+                        server.name,
+                        len(server.tools),
+                    )
+                else:
+                    _LOGGER.warning("Failed to connect to stdio MCP server %s", server.name)
+            except Exception as e:
+                _LOGGER.error("Error connecting to stdio MCP server %s: %s", server.name, e)
 
     # Get built-in Home Assistant tools
     from .mcp_handler import HomeAssistantMCPTools
     ha_tools = HomeAssistantMCPTools(hass)
     builtin_tools = ha_tools.get_builtin_tools()
+    
+    # Add stdio MCP server tools as function tools
+    stdio_tools = mcp_handler.get_tools_as_functions()
+    all_tools = builtin_tools + stdio_tools
+    _LOGGER.info(
+        "Total tools: %d builtin + %d stdio MCP = %d",
+        len(builtin_tools),
+        len(stdio_tools),
+        len(all_tools),
+    )
 
     # Create session configuration with built-in tools
     session_config = RealtimeSession(
@@ -99,7 +152,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         instructions=config.get(CONF_INSTRUCTIONS, DEFAULT_INSTRUCTIONS),
         max_output_tokens=config.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
         mcp_servers=mcp_servers,
-        tools=builtin_tools,
+        tools=all_tools,  # Includes builtin + stdio MCP tools
     )
 
     # Create the realtime client
@@ -174,15 +227,29 @@ async def async_register_services(hass: HomeAssistant) -> None:
     async def handle_add_mcp_server(call: ServiceCall) -> None:
         """Handle add_mcp_server service call."""
         name = call.data["name"]
-        url = call.data["url"]
+        server_type = call.data.get("server_type", MCP_SERVER_TYPE_SSE)
+        url = call.data.get("url", "")
         token = call.data.get("token")
+        command = call.data.get("command", "")
+        args = call.data.get("args", [])
+        env = call.data.get("env", {})
 
         for entry_id, data in hass.data.get(DOMAIN, {}).items():
+            if entry_id.startswith("_"):
+                continue
             mcp_handler: MCPServerHandler | None = data.get("mcp_handler")
             if mcp_handler:
-                mcp_handler.add_server(name, url, token)
+                mcp_handler.add_server(
+                    name=name,
+                    server_type=server_type,
+                    url=url,
+                    token=token,
+                    command=command,
+                    args=args,
+                    env=env,
+                )
                 await mcp_handler.connect_server(name)
-                _LOGGER.info("Added MCP server: %s", name)
+                _LOGGER.info("Added MCP server: %s (type: %s)", name, server_type)
                 break
 
     async def handle_remove_mcp_server(call: ServiceCall) -> None:
@@ -190,11 +257,38 @@ async def async_register_services(hass: HomeAssistant) -> None:
         name = call.data["name"]
 
         for entry_id, data in hass.data.get(DOMAIN, {}).items():
+            if entry_id.startswith("_"):
+                continue
             mcp_handler: MCPServerHandler | None = data.get("mcp_handler")
             if mcp_handler:
                 mcp_handler.remove_server(name)
                 _LOGGER.info("Removed MCP server: %s", name)
                 break
+
+    async def handle_list_mcp_servers(call: ServiceCall) -> dict:
+        """Handle list_mcp_servers service call."""
+        servers = []
+        for entry_id, data in hass.data.get(DOMAIN, {}).items():
+            if entry_id.startswith("_"):
+                continue
+            mcp_handler: MCPServerHandler | None = data.get("mcp_handler")
+            if mcp_handler:
+                servers = mcp_handler.get_server_configs()
+                break
+        return {"servers": servers}
+
+    async def handle_connect_mcp_servers(call: ServiceCall) -> dict:
+        """Handle connect_mcp_servers service call."""
+        results = {}
+        for entry_id, data in hass.data.get(DOMAIN, {}).items():
+            if entry_id.startswith("_"):
+                continue
+            mcp_handler: MCPServerHandler | None = data.get("mcp_handler")
+            if mcp_handler:
+                results = await mcp_handler.connect_all_servers()
+                _LOGGER.info("Connected MCP servers: %s", results)
+                break
+        return {"results": results}
 
     async def handle_clear_conversation(call: ServiceCall) -> None:
         """Handle clear_conversation service call."""
@@ -264,6 +358,14 @@ async def async_register_services(hass: HomeAssistant) -> None:
     if not hass.services.has_service(DOMAIN, SERVICE_REMOVE_MCP_SERVER):
         hass.services.async_register(
             DOMAIN, SERVICE_REMOVE_MCP_SERVER, handle_remove_mcp_server, schema=REMOVE_MCP_SERVER_SCHEMA
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_LIST_MCP_SERVERS):
+        hass.services.async_register(
+            DOMAIN, SERVICE_LIST_MCP_SERVERS, handle_list_mcp_servers
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_CONNECT_MCP_SERVERS):
+        hass.services.async_register(
+            DOMAIN, SERVICE_CONNECT_MCP_SERVERS, handle_connect_mcp_servers
         )
     if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_CONVERSATION):
         hass.services.async_register(

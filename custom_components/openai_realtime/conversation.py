@@ -79,8 +79,33 @@ class OpenAIRealtimeConversationAgent(conversation.AbstractConversationAgent):
         for server_config in mcp_servers:
             self._mcp_handler.add_server_from_config(server_config)
 
+        # Connect to stdio MCP servers to get their tools
+        stdio_servers = self._mcp_handler.get_stdio_servers()
+        for server in stdio_servers:
+            try:
+                await self._mcp_handler.connect_server(server.name)
+                _LOGGER.info(
+                    "Connected to stdio MCP server %s with %d tools",
+                    server.name,
+                    len(server.tools),
+                )
+            except Exception as e:
+                _LOGGER.error("Error connecting to stdio MCP server %s: %s", server.name, e)
+
         # Initialize Home Assistant tools
         self._ha_tools = HomeAssistantMCPTools(self.hass)
+        
+        # Build tools list: HA builtin + stdio MCP tools
+        builtin_tools = self._ha_tools.get_builtin_tools()
+        stdio_tools = self._mcp_handler.get_tools_as_functions()
+        all_tools = builtin_tools + stdio_tools
+        
+        _LOGGER.info(
+            "Agent tools: %d builtin + %d stdio MCP = %d total",
+            len(builtin_tools),
+            len(stdio_tools),
+            len(all_tools),
+        )
 
         # Create session configuration
         session_config = RealtimeSession(
@@ -88,7 +113,7 @@ class OpenAIRealtimeConversationAgent(conversation.AbstractConversationAgent):
             voice=config.get(CONF_VOICE, DEFAULT_VOICE),
             instructions=self._build_instructions(config),
             max_output_tokens=config.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
-            tools=self._ha_tools.get_builtin_tools(),
+            tools=all_tools,
             mcp_servers=mcp_servers,
         )
 
@@ -170,6 +195,14 @@ Always confirm actions you take and provide helpful feedback.
         # Check for Home Assistant built-in tools
         if function_name in ["get_entity_state", "call_service", "get_entities_by_domain", "get_area_entities"]:
             return await self._ha_tools.execute_tool(function_name, arguments)
+        
+        # Check if this is an MCP server function (format: server_name__tool_name)
+        if self._mcp_handler and "__" in function_name:
+            parsed = self._mcp_handler.parse_function_name(function_name)
+            if parsed:
+                server_name, tool_name = parsed
+                _LOGGER.info("Calling MCP tool: %s/%s", server_name, tool_name)
+                return await self._mcp_handler.call_tool(server_name, tool_name, arguments)
         
         # Fallback: guess based on arguments (for backwards compatibility)
         if not function_name:

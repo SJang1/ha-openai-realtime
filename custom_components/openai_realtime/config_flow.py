@@ -18,8 +18,13 @@ from .const import (
     CONF_API_KEY,
     CONF_INSTRUCTIONS,
     CONF_MAX_OUTPUT_TOKENS,
+    CONF_MCP_SERVER_ARGS,
+    CONF_MCP_SERVER_COMMAND,
+    CONF_MCP_SERVER_ENABLED,
+    CONF_MCP_SERVER_ENV,
     CONF_MCP_SERVER_NAME,
     CONF_MCP_SERVER_TOKEN,
+    CONF_MCP_SERVER_TYPE,
     CONF_MCP_SERVER_URL,
     CONF_MCP_SERVERS,
     CONF_MODEL,
@@ -31,6 +36,9 @@ from .const import (
     DEFAULT_TEMPERATURE,
     DEFAULT_VOICE,
     DOMAIN,
+    MCP_SERVER_TYPE_SSE,
+    MCP_SERVER_TYPE_STDIO,
+    MCP_SERVER_TYPES,
     MODELS,
     OPENAI_CLIENT_SECRET_URL,
     VOICES,
@@ -68,7 +76,8 @@ class OpenAIRealtimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         """Initialize the config flow."""
         self._api_key: str | None = None
-        self._mcp_servers: list[dict[str, str]] = []
+        self._config: dict[str, Any] = {}
+        self._mcp_servers: list[dict[str, Any]] = []
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -102,7 +111,8 @@ class OpenAIRealtimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            return await self.async_step_mcp_servers(user_input)
+            self._config = user_input
+            return await self.async_step_mcp_menu()
 
         return self.async_show_form(
             step_id="configure",
@@ -153,82 +163,153 @@ class OpenAIRealtimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_mcp_servers(
-        self, previous_input: dict[str, Any], user_input: dict[str, Any] | None = None
+    async def async_step_mcp_menu(
+        self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Configure MCP servers."""
+        """Show MCP server management menu."""
+        if user_input is not None:
+            action = user_input.get("action")
+            if action == "add_sse":
+                return await self.async_step_mcp_add_sse()
+            elif action == "add_stdio":
+                return await self.async_step_mcp_add_stdio()
+            elif action == "finish":
+                return self._create_entry()
+
+        # Build server list description
+        server_list = ""
+        if self._mcp_servers:
+            server_list = "\n".join(
+                f"  • {s.get(CONF_MCP_SERVER_NAME, 'Unnamed')} ({s.get(CONF_MCP_SERVER_TYPE, 'sse')})"
+                for s in self._mcp_servers
+            )
+        else:
+            server_list = "  No servers configured"
+
+        return self.async_show_form(
+            step_id="mcp_menu",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("action", default="finish"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=[
+                                {"value": "add_sse", "label": "Add SSE Server"},
+                                {"value": "add_stdio", "label": "Add Stdio Server"},
+                                {"value": "finish", "label": "Finish Setup"},
+                            ],
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }
+            ),
+            description_placeholders={
+                "server_count": str(len(self._mcp_servers)),
+                "server_list": server_list,
+            },
+        )
+
+    async def async_step_mcp_add_sse(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add an SSE MCP server."""
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            if user_input.get("add_mcp_server"):
-                # Add the MCP server
-                self._mcp_servers.append(
-                    {
-                        CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, ""),
-                        CONF_MCP_SERVER_URL: user_input.get(CONF_MCP_SERVER_URL, ""),
-                        CONF_MCP_SERVER_TOKEN: user_input.get(CONF_MCP_SERVER_TOKEN, ""),
-                    }
-                )
-                # Show form again for more servers
-                return self.async_show_form(
-                    step_id="mcp_server_add",
-                    data_schema=self._get_mcp_server_schema(),
-                    errors=errors,
-                    description_placeholders={
-                        "server_count": str(len(self._mcp_servers))
-                    },
-                )
+            url = user_input.get(CONF_MCP_SERVER_URL, "")
+            if url and not url.startswith(("http://", "https://")):
+                errors[CONF_MCP_SERVER_URL] = "invalid_url"
+            elif url:
+                self._mcp_servers.append({
+                    CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, f"SSE Server {len(self._mcp_servers) + 1}"),
+                    CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_SSE,
+                    CONF_MCP_SERVER_URL: url,
+                    CONF_MCP_SERVER_TOKEN: user_input.get(CONF_MCP_SERVER_TOKEN, ""),
+                    CONF_MCP_SERVER_ENABLED: True,
+                })
+                return await self.async_step_mcp_menu()
             else:
-                # Done adding servers, create the entry
-                return self._create_entry(previous_input)
+                return await self.async_step_mcp_menu()
 
-        # First time here, ask if they want to add MCP servers
         return self.async_show_form(
-            step_id="mcp_server_add",
-            data_schema=self._get_mcp_server_schema(),
+            step_id="mcp_add_sse",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MCP_SERVER_NAME): str,
+                    vol.Required(CONF_MCP_SERVER_URL): str,
+                    vol.Optional(CONF_MCP_SERVER_TOKEN): str,
+                }
+            ),
             errors=errors,
-            description_placeholders={"server_count": str(len(self._mcp_servers))},
         )
+
+    async def async_step_mcp_add_stdio(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add a Stdio MCP server."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            command = user_input.get(CONF_MCP_SERVER_COMMAND, "")
+            if command:
+                # Parse args from comma-separated string
+                args_str = user_input.get(CONF_MCP_SERVER_ARGS, "")
+                args = [a.strip() for a in args_str.split(",") if a.strip()] if args_str else []
+
+                # Parse env from key=value pairs
+                env_str = user_input.get(CONF_MCP_SERVER_ENV, "")
+                env = {}
+                if env_str:
+                    for pair in env_str.split(","):
+                        if "=" in pair:
+                            key, value = pair.split("=", 1)
+                            env[key.strip()] = value.strip()
+
+                self._mcp_servers.append({
+                    CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, f"Stdio Server {len(self._mcp_servers) + 1}"),
+                    CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_STDIO,
+                    CONF_MCP_SERVER_COMMAND: command,
+                    CONF_MCP_SERVER_ARGS: args,
+                    CONF_MCP_SERVER_ENV: env,
+                    CONF_MCP_SERVER_ENABLED: True,
+                })
+                return await self.async_step_mcp_menu()
+            else:
+                return await self.async_step_mcp_menu()
+
+        return self.async_show_form(
+            step_id="mcp_add_stdio",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MCP_SERVER_NAME): str,
+                    vol.Required(CONF_MCP_SERVER_COMMAND): str,
+                    vol.Optional(CONF_MCP_SERVER_ARGS, default=""): str,
+                    vol.Optional(CONF_MCP_SERVER_ENV, default=""): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "args_hint": "Comma-separated arguments (e.g., --port,8080)",
+                "env_hint": "Comma-separated key=value pairs (e.g., API_KEY=xxx,DEBUG=true)",
+            },
+        )
+
+    async def async_step_mcp_servers(
+        self, previous_input: dict[str, Any], user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Configure MCP servers (legacy method)."""
+        return await self.async_step_mcp_menu(user_input)
 
     async def async_step_mcp_server_add(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Add an MCP server."""
-        errors: dict[str, str] = {}
-
-        if user_input is not None:
-            if user_input.get(CONF_MCP_SERVER_URL):
-                # Validate URL format
-                url = user_input.get(CONF_MCP_SERVER_URL, "")
-                if not url.startswith(("http://", "https://", "ws://", "wss://")):
-                    errors[CONF_MCP_SERVER_URL] = "invalid_url"
-                else:
-                    self._mcp_servers.append(
-                        {
-                            CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, f"MCP Server {len(self._mcp_servers) + 1}"),
-                            CONF_MCP_SERVER_URL: url,
-                            CONF_MCP_SERVER_TOKEN: user_input.get(CONF_MCP_SERVER_TOKEN, ""),
-                        }
-                    )
-
-            if not user_input.get("add_another"):
-                # Done adding servers
-                return await self.async_step_finish()
-
-        return self.async_show_form(
-            step_id="mcp_server_add",
-            data_schema=self._get_mcp_server_schema(),
-            errors=errors,
-            description_placeholders={"server_count": str(len(self._mcp_servers))},
-        )
+        """Add an MCP server (legacy method)."""
+        return await self.async_step_mcp_menu(user_input)
 
     async def async_step_finish(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Finish the configuration."""
-        # Retrieve stored config from context
-        config = getattr(self, "_config", {})
-        return self._create_entry(config)
+        return self._create_entry()
 
     def _get_mcp_server_schema(self) -> vol.Schema:
         """Get the schema for MCP server configuration."""
@@ -241,20 +322,20 @@ class OpenAIRealtimeConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             }
         )
 
-    def _create_entry(self, config: dict[str, Any]) -> FlowResult:
+    def _create_entry(self) -> FlowResult:
         """Create the config entry."""
         data = {
             CONF_API_KEY: self._api_key,
-            CONF_MODEL: config.get(CONF_MODEL, DEFAULT_MODEL),
-            CONF_VOICE: config.get(CONF_VOICE, DEFAULT_VOICE),
-            CONF_INSTRUCTIONS: config.get(CONF_INSTRUCTIONS, DEFAULT_INSTRUCTIONS),
-            CONF_TEMPERATURE: config.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE),
-            CONF_MAX_OUTPUT_TOKENS: config.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
+            CONF_MODEL: self._config.get(CONF_MODEL, DEFAULT_MODEL),
+            CONF_VOICE: self._config.get(CONF_VOICE, DEFAULT_VOICE),
+            CONF_INSTRUCTIONS: self._config.get(CONF_INSTRUCTIONS, DEFAULT_INSTRUCTIONS),
+            CONF_TEMPERATURE: self._config.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE),
+            CONF_MAX_OUTPUT_TOKENS: self._config.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
             CONF_MCP_SERVERS: self._mcp_servers,
         }
 
         return self.async_create_entry(
-            title=config.get(CONF_NAME, "OpenAI Realtime"),
+            title=self._config.get(CONF_NAME, "OpenAI Realtime"),
             data=data,
         )
 
@@ -272,7 +353,8 @@ class OpenAIRealtimeOptionsFlow(config_entries.OptionsFlow):
 
     def __init__(self) -> None:
         """Initialize options flow."""
-        self._mcp_servers: list[dict[str, str]] = []
+        self._mcp_servers: list[dict[str, Any]] = []
+        self._editing_server_index: int | None = None
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
@@ -281,23 +363,23 @@ class OpenAIRealtimeOptionsFlow(config_entries.OptionsFlow):
         errors: dict[str, str] = {}
 
         # Initialize MCP servers from config entry on first call
+        # Check options first, then fall back to data
         if not self._mcp_servers:
+            current_config = {**self.config_entry.data, **self.config_entry.options}
             self._mcp_servers = list(
-                self.config_entry.data.get(CONF_MCP_SERVERS, [])
+                current_config.get(CONF_MCP_SERVERS, [])
             )
 
         if user_input is not None:
-            return self.async_create_entry(
-                title="",
-                data={
-                    CONF_MODEL: user_input.get(CONF_MODEL, DEFAULT_MODEL),
-                    CONF_VOICE: user_input.get(CONF_VOICE, DEFAULT_VOICE),
-                    CONF_INSTRUCTIONS: user_input.get(CONF_INSTRUCTIONS, DEFAULT_INSTRUCTIONS),
-                    CONF_TEMPERATURE: user_input.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE),
-                    CONF_MAX_OUTPUT_TOKENS: user_input.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
-                    CONF_MCP_SERVERS: self._mcp_servers,
-                },
-            )
+            # Save main settings and go to MCP menu
+            self._main_config = {
+                CONF_MODEL: user_input.get(CONF_MODEL, DEFAULT_MODEL),
+                CONF_VOICE: user_input.get(CONF_VOICE, DEFAULT_VOICE),
+                CONF_INSTRUCTIONS: user_input.get(CONF_INSTRUCTIONS, DEFAULT_INSTRUCTIONS),
+                CONF_TEMPERATURE: user_input.get(CONF_TEMPERATURE, DEFAULT_TEMPERATURE),
+                CONF_MAX_OUTPUT_TOKENS: user_input.get(CONF_MAX_OUTPUT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS),
+            }
+            return await self.async_step_mcp_menu()
 
         current_config = {**self.config_entry.data, **self.config_entry.options}
 
@@ -356,4 +438,309 @@ class OpenAIRealtimeOptionsFlow(config_entries.OptionsFlow):
                 }
             ),
             errors=errors,
+        )
+
+    async def async_step_mcp_menu(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Show MCP server management menu."""
+        if user_input is not None:
+            action = user_input.get("action")
+            if action == "add_sse":
+                return await self.async_step_mcp_add_sse()
+            elif action == "add_stdio":
+                return await self.async_step_mcp_add_stdio()
+            elif action == "manage":
+                return await self.async_step_mcp_manage()
+            elif action == "finish":
+                return self._save_options()
+
+        # Build options based on current servers
+        options = [
+            {"value": "add_sse", "label": "Add SSE Server"},
+            {"value": "add_stdio", "label": "Add Stdio Server"},
+        ]
+
+        if self._mcp_servers:
+            options.insert(0, {"value": "manage", "label": "Manage Existing Servers"})
+
+        options.append({"value": "finish", "label": "Save & Finish"})
+
+        # Build server list description
+        server_list = ""
+        if self._mcp_servers:
+            server_list = "\n".join(
+                f"  • {s.get(CONF_MCP_SERVER_NAME, 'Unnamed')} ({s.get(CONF_MCP_SERVER_TYPE, 'sse')}) {'✓' if s.get(CONF_MCP_SERVER_ENABLED, True) else '✗'}"
+                for s in self._mcp_servers
+            )
+        else:
+            server_list = "  No servers configured"
+
+        return self.async_show_form(
+            step_id="mcp_menu",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("action", default="finish"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }
+            ),
+            description_placeholders={
+                "server_count": str(len(self._mcp_servers)),
+                "server_list": server_list,
+            },
+        )
+
+    async def async_step_mcp_add_sse(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add an SSE MCP server."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            url = user_input.get(CONF_MCP_SERVER_URL, "")
+            if url and not url.startswith(("http://", "https://")):
+                errors[CONF_MCP_SERVER_URL] = "invalid_url"
+            elif url:
+                self._mcp_servers.append({
+                    CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, f"SSE Server {len(self._mcp_servers) + 1}"),
+                    CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_SSE,
+                    CONF_MCP_SERVER_URL: url,
+                    CONF_MCP_SERVER_TOKEN: user_input.get(CONF_MCP_SERVER_TOKEN, ""),
+                    CONF_MCP_SERVER_ENABLED: True,
+                })
+                return await self.async_step_mcp_menu()
+            else:
+                return await self.async_step_mcp_menu()
+
+        return self.async_show_form(
+            step_id="mcp_add_sse",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MCP_SERVER_NAME): str,
+                    vol.Required(CONF_MCP_SERVER_URL): str,
+                    vol.Optional(CONF_MCP_SERVER_TOKEN): str,
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_mcp_add_stdio(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Add a Stdio MCP server."""
+        errors: dict[str, str] = {}
+
+        if user_input is not None:
+            command = user_input.get(CONF_MCP_SERVER_COMMAND, "")
+            if command:
+                # Parse args from comma-separated string
+                args_str = user_input.get(CONF_MCP_SERVER_ARGS, "")
+                args = [a.strip() for a in args_str.split(",") if a.strip()] if args_str else []
+
+                # Parse env from key=value pairs
+                env_str = user_input.get(CONF_MCP_SERVER_ENV, "")
+                env = {}
+                if env_str:
+                    for pair in env_str.split(","):
+                        if "=" in pair:
+                            key, value = pair.split("=", 1)
+                            env[key.strip()] = value.strip()
+
+                self._mcp_servers.append({
+                    CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, f"Stdio Server {len(self._mcp_servers) + 1}"),
+                    CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_STDIO,
+                    CONF_MCP_SERVER_COMMAND: command,
+                    CONF_MCP_SERVER_ARGS: args,
+                    CONF_MCP_SERVER_ENV: env,
+                    CONF_MCP_SERVER_ENABLED: True,
+                })
+                return await self.async_step_mcp_menu()
+            else:
+                return await self.async_step_mcp_menu()
+
+        return self.async_show_form(
+            step_id="mcp_add_stdio",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_MCP_SERVER_NAME): str,
+                    vol.Required(CONF_MCP_SERVER_COMMAND): str,
+                    vol.Optional(CONF_MCP_SERVER_ARGS, default=""): str,
+                    vol.Optional(CONF_MCP_SERVER_ENV, default=""): str,
+                }
+            ),
+            errors=errors,
+            description_placeholders={
+                "args_hint": "Comma-separated arguments (e.g., --port,8080)",
+                "env_hint": "Comma-separated key=value pairs (e.g., API_KEY=xxx,DEBUG=true)",
+            },
+        )
+
+    async def async_step_mcp_manage(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Manage existing MCP servers."""
+        if user_input is not None:
+            action = user_input.get("action")
+            if action == "back":
+                return await self.async_step_mcp_menu()
+            elif action and action.startswith("edit_"):
+                try:
+                    self._editing_server_index = int(action.split("_")[1])
+                    return await self.async_step_mcp_edit()
+                except (ValueError, IndexError):
+                    pass
+            elif action and action.startswith("delete_"):
+                try:
+                    idx = int(action.split("_")[1])
+                    if 0 <= idx < len(self._mcp_servers):
+                        del self._mcp_servers[idx]
+                except (ValueError, IndexError):
+                    pass
+            elif action and action.startswith("toggle_"):
+                try:
+                    idx = int(action.split("_")[1])
+                    if 0 <= idx < len(self._mcp_servers):
+                        current = self._mcp_servers[idx].get(CONF_MCP_SERVER_ENABLED, True)
+                        self._mcp_servers[idx][CONF_MCP_SERVER_ENABLED] = not current
+                except (ValueError, IndexError):
+                    pass
+
+        # Build server action options
+        options = []
+        for i, server in enumerate(self._mcp_servers):
+            name = server.get(CONF_MCP_SERVER_NAME, f"Server {i + 1}")
+            server_type = server.get(CONF_MCP_SERVER_TYPE, "sse")
+            enabled = server.get(CONF_MCP_SERVER_ENABLED, True)
+            status = "Enabled" if enabled else "Disabled"
+
+            options.append({"value": f"edit_{i}", "label": f"✏️ Edit: {name}"})
+            options.append({"value": f"toggle_{i}", "label": f"{'🔴 Disable' if enabled else '🟢 Enable'}: {name}"})
+            options.append({"value": f"delete_{i}", "label": f"🗑️ Delete: {name}"})
+
+        options.append({"value": "back", "label": "← Back to Menu"})
+
+        return self.async_show_form(
+            step_id="mcp_manage",
+            data_schema=vol.Schema(
+                {
+                    vol.Required("action", default="back"): selector.SelectSelector(
+                        selector.SelectSelectorConfig(
+                            options=options,
+                            mode=selector.SelectSelectorMode.LIST,
+                        )
+                    ),
+                }
+            ),
+        )
+
+    async def async_step_mcp_edit(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Edit an existing MCP server."""
+        errors: dict[str, str] = {}
+
+        if self._editing_server_index is None or self._editing_server_index >= len(self._mcp_servers):
+            return await self.async_step_mcp_manage()
+
+        server = self._mcp_servers[self._editing_server_index]
+        server_type = server.get(CONF_MCP_SERVER_TYPE, MCP_SERVER_TYPE_SSE)
+
+        if user_input is not None:
+            if server_type == MCP_SERVER_TYPE_SSE:
+                url = user_input.get(CONF_MCP_SERVER_URL, "")
+                if url and not url.startswith(("http://", "https://")):
+                    errors[CONF_MCP_SERVER_URL] = "invalid_url"
+                else:
+                    self._mcp_servers[self._editing_server_index] = {
+                        CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, server.get(CONF_MCP_SERVER_NAME)),
+                        CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_SSE,
+                        CONF_MCP_SERVER_URL: url,
+                        CONF_MCP_SERVER_TOKEN: user_input.get(CONF_MCP_SERVER_TOKEN, ""),
+                        CONF_MCP_SERVER_ENABLED: server.get(CONF_MCP_SERVER_ENABLED, True),
+                    }
+                    self._editing_server_index = None
+                    return await self.async_step_mcp_manage()
+            else:
+                # Parse args from comma-separated string
+                args_str = user_input.get(CONF_MCP_SERVER_ARGS, "")
+                args = [a.strip() for a in args_str.split(",") if a.strip()] if args_str else []
+
+                # Parse env from key=value pairs
+                env_str = user_input.get(CONF_MCP_SERVER_ENV, "")
+                env = {}
+                if env_str:
+                    for pair in env_str.split(","):
+                        if "=" in pair:
+                            key, value = pair.split("=", 1)
+                            env[key.strip()] = value.strip()
+
+                self._mcp_servers[self._editing_server_index] = {
+                    CONF_MCP_SERVER_NAME: user_input.get(CONF_MCP_SERVER_NAME, server.get(CONF_MCP_SERVER_NAME)),
+                    CONF_MCP_SERVER_TYPE: MCP_SERVER_TYPE_STDIO,
+                    CONF_MCP_SERVER_COMMAND: user_input.get(CONF_MCP_SERVER_COMMAND, ""),
+                    CONF_MCP_SERVER_ARGS: args,
+                    CONF_MCP_SERVER_ENV: env,
+                    CONF_MCP_SERVER_ENABLED: server.get(CONF_MCP_SERVER_ENABLED, True),
+                }
+                self._editing_server_index = None
+                return await self.async_step_mcp_manage()
+
+        if server_type == MCP_SERVER_TYPE_SSE:
+            return self.async_show_form(
+                step_id="mcp_edit",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_MCP_SERVER_NAME, default=server.get(CONF_MCP_SERVER_NAME, "")): str,
+                        vol.Required(CONF_MCP_SERVER_URL, default=server.get(CONF_MCP_SERVER_URL, "")): str,
+                        vol.Optional(CONF_MCP_SERVER_TOKEN, default=server.get(CONF_MCP_SERVER_TOKEN, "")): str,
+                    }
+                ),
+                errors=errors,
+            )
+        else:
+            # Format args and env for editing
+            args = server.get(CONF_MCP_SERVER_ARGS, [])
+            args_str = ",".join(args) if isinstance(args, list) else str(args)
+
+            env = server.get(CONF_MCP_SERVER_ENV, {})
+            env_str = ",".join(f"{k}={v}" for k, v in env.items()) if isinstance(env, dict) else str(env)
+
+            return self.async_show_form(
+                step_id="mcp_edit",
+                data_schema=vol.Schema(
+                    {
+                        vol.Required(CONF_MCP_SERVER_NAME, default=server.get(CONF_MCP_SERVER_NAME, "")): str,
+                        vol.Required(CONF_MCP_SERVER_COMMAND, default=server.get(CONF_MCP_SERVER_COMMAND, "")): str,
+                        vol.Optional(CONF_MCP_SERVER_ARGS, default=args_str): str,
+                        vol.Optional(CONF_MCP_SERVER_ENV, default=env_str): str,
+                    }
+                ),
+                errors=errors,
+                description_placeholders={
+                    "args_hint": "Comma-separated arguments",
+                    "env_hint": "Comma-separated key=value pairs",
+                },
+            )
+
+    def _save_options(self) -> FlowResult:
+        """Save the options."""
+        # We need to update the config entry data for MCP servers
+        # because they are stored in data, not options
+        new_data = {**self.config_entry.data}
+        new_data[CONF_MCP_SERVERS] = self._mcp_servers
+        
+        self.hass.config_entries.async_update_entry(
+            self.config_entry,
+            data=new_data,
+        )
+        
+        return self.async_create_entry(
+            title="",
+            data={
+                **getattr(self, "_main_config", {}),
+            },
         )

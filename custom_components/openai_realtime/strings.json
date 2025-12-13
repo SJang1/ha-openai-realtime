@@ -20,6 +20,32 @@
           "max_output_tokens": "Max Output Tokens"
         }
       },
+      "mcp_menu": {
+        "title": "MCP Server Configuration",
+        "description": "Manage MCP (Model Context Protocol) servers for extended functionality.\n\nConfigured servers ({server_count}):\n{server_list}",
+        "data": {
+          "action": "Select Action"
+        }
+      },
+      "mcp_add_sse": {
+        "title": "Add SSE MCP Server",
+        "description": "Add a Server-Sent Events (SSE) MCP server. SSE servers communicate over HTTP and can be used directly with OpenAI Realtime API.",
+        "data": {
+          "name": "Server Name",
+          "url": "Server URL (e.g., https://mcp.example.com/sse)",
+          "token": "Authentication Token (optional)"
+        }
+      },
+      "mcp_add_stdio": {
+        "title": "Add Stdio MCP Server",
+        "description": "Add a stdio-based MCP server. These servers run as local processes and communicate via stdin/stdout.\n\nArgs: {args_hint}\nEnv: {env_hint}",
+        "data": {
+          "name": "Server Name",
+          "command": "Command (e.g., npx, python, node)",
+          "args": "Arguments (comma-separated)",
+          "env": "Environment Variables (KEY=value, comma-separated)"
+        }
+      },
       "mcp_server_add": {
         "title": "Add MCP Server",
         "description": "Optionally add MCP (Model Context Protocol) servers for extended functionality. You have added {server_count} server(s).",
@@ -34,7 +60,7 @@
     "error": {
       "invalid_auth": "Invalid API key. Please check your OpenAI API key.",
       "cannot_connect": "Could not connect to OpenAI API.",
-      "invalid_url": "Invalid MCP server URL. URL must start with http://, https://, ws://, or wss://",
+      "invalid_url": "Invalid MCP server URL. URL must start with http:// or https://",
       "unknown": "An unknown error occurred."
     },
     "abort": {
@@ -45,7 +71,7 @@
     "step": {
       "init": {
         "title": "OpenAI Realtime Options",
-        "description": "Update the realtime conversation settings.",
+        "description": "Update the realtime conversation settings. After saving, you can manage MCP servers.",
         "data": {
           "model": "Model",
           "voice": "Voice",
@@ -53,7 +79,55 @@
           "temperature": "Temperature",
           "max_output_tokens": "Max Output Tokens"
         }
+      },
+      "mcp_menu": {
+        "title": "MCP Server Management",
+        "description": "Manage your MCP servers.\n\nConfigured servers ({server_count}):\n{server_list}",
+        "data": {
+          "action": "Select Action"
+        }
+      },
+      "mcp_add_sse": {
+        "title": "Add SSE MCP Server",
+        "description": "Add a Server-Sent Events (SSE) MCP server.",
+        "data": {
+          "name": "Server Name",
+          "url": "Server URL",
+          "token": "Authentication Token (optional)"
+        }
+      },
+      "mcp_add_stdio": {
+        "title": "Add Stdio MCP Server",
+        "description": "Add a stdio-based MCP server.\n\nArgs: {args_hint}\nEnv: {env_hint}",
+        "data": {
+          "name": "Server Name",
+          "command": "Command",
+          "args": "Arguments (comma-separated)",
+          "env": "Environment Variables"
+        }
+      },
+      "mcp_manage": {
+        "title": "Manage MCP Servers",
+        "description": "Select a server to edit, enable/disable, or delete.",
+        "data": {
+          "action": "Select Action"
+        }
+      },
+      "mcp_edit": {
+        "title": "Edit MCP Server",
+        "description": "Modify the server configuration.",
+        "data": {
+          "name": "Server Name",
+          "url": "Server URL",
+          "token": "Authentication Token",
+          "command": "Command",
+          "args": "Arguments",
+          "env": "Environment Variables"
+        }
       }
+    },
+    "error": {
+      "invalid_url": "Invalid URL format. Must start with http:// or https://"
     }
   }
 }
