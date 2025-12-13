@@ -326,6 +326,20 @@ class OpenAIRealtimeCard extends HTMLElement {
       this._unsubscribe = null;
     }
     
+    // Disconnect from OpenAI Realtime API
+    if (this._hass && this._isConnected) {
+      try {
+        console.log('Disconnecting from OpenAI Realtime API...');
+        await this._hass.callWS({
+          type: 'openai_realtime/disconnect',
+        });
+        console.log('Disconnected from OpenAI Realtime API');
+      } catch (e) {
+        console.log('Disconnect error:', e);
+      }
+      this._isConnected = false;
+    }
+    
     this._updateUI();
   }
 
