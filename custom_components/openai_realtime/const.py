@@ -38,7 +38,7 @@ VOICES: Final = [
 # Available models
 MODELS: Final = [
     "gpt-realtime",
-    "gpt-realtime-2025-08-28",
+    "gpt-realtime-mini",
 ]
 
 # API endpoints
