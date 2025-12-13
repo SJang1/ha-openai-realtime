@@ -151,6 +151,8 @@ async def async_register_services(hass: HomeAssistant) -> None:
         message = call.data["message"]
 
         for entry_id, data in hass.data.get(DOMAIN, {}).items():
+            if entry_id.startswith("_"):
+                continue
             agent: OpenAIRealtimeConversationAgent | None = data.get("agent")
             if agent:
                 # Use the agent to send message
@@ -162,6 +164,9 @@ async def async_register_services(hass: HomeAssistant) -> None:
                     context=call.context,
                     conversation_id=ulid.ulid_now(),
                     language="en",
+                    device_id=None,
+                    satellite_id=None,
+                    agent_id=entry_id,
                 )
                 await agent.async_process(user_input)
                 break
