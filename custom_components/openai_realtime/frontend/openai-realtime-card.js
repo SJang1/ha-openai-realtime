@@ -28,6 +28,51 @@ class OpenAIRealtimeCard extends HTMLElement {
     this._transcript = '';
     this._responseText = '';
     this._audioSent = false;
+    
+    // Bind handlers for page unload events
+    this._handleBeforeUnload = this._handleBeforeUnload.bind(this);
+    this._handlePageHide = this._handlePageHide.bind(this);
+  }
+  
+  connectedCallback() {
+    // Add event listeners for page close/refresh
+    window.addEventListener('beforeunload', this._handleBeforeUnload);
+    window.addEventListener('pagehide', this._handlePageHide);
+  }
+  
+  _handleBeforeUnload() {
+    // Disconnect synchronously before page unloads
+    this._disconnectSync();
+  }
+  
+  _handlePageHide() {
+    // Disconnect when page is hidden (mobile browsers, tab switching)
+    this._disconnectSync();
+  }
+  
+  _disconnectSync() {
+    // Stop listening and disconnect synchronously
+    if (this._isConnected && this._hass) {
+      console.log('Page unloading, disconnecting from OpenAI Realtime...');
+      
+      // Stop mic stream
+      if (this._stream) {
+        this._stream.getTracks().forEach(track => track.stop());
+        this._stream = null;
+      }
+      
+      // Send disconnect command (fire and forget)
+      try {
+        this._hass.callWS({
+          type: 'openai_realtime/disconnect',
+        });
+      } catch (e) {
+        // Ignore errors during unload
+      }
+      
+      this._isConnected = false;
+      this._isListening = false;
+    }
   }
 
   set hass(hass) {
@@ -840,6 +885,10 @@ class OpenAIRealtimeCard extends HTMLElement {
   }
 
   disconnectedCallback() {
+    // Remove page unload event listeners
+    window.removeEventListener('beforeunload', this._handleBeforeUnload);
+    window.removeEventListener('pagehide', this._handlePageHide);
+    
     this._stopListening();
     if (this._unsubscribe) {
       this._unsubscribe();
