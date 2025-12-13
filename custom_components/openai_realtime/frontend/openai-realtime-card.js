@@ -41,6 +41,9 @@ class OpenAIRealtimeCard extends HTMLElement {
       show_transcript: config.show_transcript !== false,
       show_response: config.show_response !== false,
       sample_rate: config.sample_rate || 24000,
+      // Mute mic while AI is speaking to prevent echo/feedback loop
+      // Set to false to allow interrupting the AI (requires headphones or good echo cancellation)
+      mute_while_speaking: config.mute_while_speaking !== false,
       ...config,
     };
     this._render();
@@ -55,6 +58,7 @@ class OpenAIRealtimeCard extends HTMLElement {
       title: 'OpenAI Realtime',
       show_transcript: true,
       show_response: true,
+      mute_while_speaking: true,
     };
   }
 
@@ -187,6 +191,45 @@ class OpenAIRealtimeCard extends HTMLElement {
           margin-top: 8px;
           text-align: center;
         }
+        .options-row {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 8px;
+          margin-top: 12px;
+          font-size: 0.85em;
+          color: var(--secondary-text-color);
+        }
+        .toggle-switch {
+          position: relative;
+          width: 40px;
+          height: 22px;
+          background-color: var(--disabled-color, #ccc);
+          border-radius: 11px;
+          cursor: pointer;
+          transition: background-color 0.3s;
+        }
+        .toggle-switch.active {
+          background-color: var(--primary-color);
+        }
+        .toggle-switch::after {
+          content: '';
+          position: absolute;
+          width: 18px;
+          height: 18px;
+          background-color: white;
+          border-radius: 50%;
+          top: 2px;
+          left: 2px;
+          transition: transform 0.3s;
+        }
+        .toggle-switch.active::after {
+          transform: translateX(18px);
+        }
+        .option-label {
+          cursor: pointer;
+          user-select: none;
+        }
       </style>
       <ha-card>
         <div class="header">
@@ -223,6 +266,11 @@ class OpenAIRealtimeCard extends HTMLElement {
           </div>
         ` : ''}
         
+        <div class="options-row">
+          <span class="option-label" id="mute-label">Mute while AI speaks</span>
+          <div class="toggle-switch ${this._config.mute_while_speaking ? 'active' : ''}" id="mute-toggle"></div>
+        </div>
+        
         <div class="error-message" id="error-message" style="display: none;"></div>
       </ha-card>
     `;
@@ -234,6 +282,21 @@ class OpenAIRealtimeCard extends HTMLElement {
     const micButton = this.shadowRoot.getElementById('mic-button');
     if (micButton) {
       micButton.addEventListener('click', () => this._toggleListening());
+    }
+    
+    // Mute toggle
+    const muteToggle = this.shadowRoot.getElementById('mute-toggle');
+    const muteLabel = this.shadowRoot.getElementById('mute-label');
+    if (muteToggle) {
+      const toggleMute = () => {
+        this._config.mute_while_speaking = !this._config.mute_while_speaking;
+        muteToggle.classList.toggle('active', this._config.mute_while_speaking);
+        console.log('Mute while speaking:', this._config.mute_while_speaking);
+      };
+      muteToggle.addEventListener('click', toggleMute);
+      if (muteLabel) {
+        muteLabel.addEventListener('click', toggleMute);
+      }
     }
   }
 
@@ -366,6 +429,9 @@ class OpenAIRealtimeCard extends HTMLElement {
     
     processor.onaudioprocess = (e) => {
       if (!this._isListening) return;
+      
+      // Optionally mute mic while AI is speaking to prevent feedback loop
+      if (this._config.mute_while_speaking && (this._isSpeaking || this._isPlayingAudio)) return;
       
       const inputData = e.inputBuffer.getChannelData(0);
       

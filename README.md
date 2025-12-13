@@ -297,6 +297,7 @@ type: custom:openai-realtime-card
 title: OpenAI Realtime Voice
 show_transcript: true
 show_waveform: true
+mute_while_speaking: true
 ```
 
 5. Click **Save**
@@ -323,6 +324,7 @@ If you need to edit the card later:
 | `title` | string | "OpenAI Realtime" | Card title |
 | `show_transcript` | boolean | true | Show conversation transcript |
 | `show_waveform` | boolean | true | Show audio waveform visualization |
+| `mute_while_speaking` | boolean | true | Mute microphone while AI is speaking to prevent echo/feedback. Set to `false` to allow interrupting the AI (requires headphones or good hardware echo cancellation) |
 
 ### Browser Requirements
 
