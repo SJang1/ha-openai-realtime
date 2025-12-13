@@ -268,7 +268,7 @@ The integration tries to register the card automatically, but you may need to ad
 1. Go to **Settings** → **Dashboards** → **⋮ (three dots)** → **Resources**
 2. Click **Add Resource**
 3. Enter:
-   - **URL**: `/openai_realtime/openai-realtime-card.js`
+   - **URL**: `/openai_realtime/openai-realtime-card.js?v=(random_int_for_debug/update)`
    - **Resource type**: JavaScript Module
 4. Click **Create**
 
