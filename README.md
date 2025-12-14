@@ -1,35 +1,63 @@
-# OpenAI Realtime Conversation for Home Assistant
+# Realtime AI Audio for Home Assistant
 
-A Home Assistant custom component that integrates with OpenAI's Realtime API for real-time voice and text conversations, with MCP (Model Context Protocol) server support.
+A Home Assistant custom component that integrates with **OpenAI's Realtime API** and **Google's Gemini Live API** for real-time voice and text conversations, with MCP (Model Context Protocol) server support.
+
+## 🎯 Included Integrations
+
+| Integration | API | Voice Model |
+|-------------|-----|-------------|
+| **OpenAI Realtime** | OpenAI Realtime API | GPT-4o Realtime |
+| **Gemini Live** | Google Gemini Live API | Gemini 2.0 Flash |
+
+Both integrations provide native speech-to-speech capabilities with minimal latency.
 
 ## Features
 
-- **Real-time Conversations**: Uses OpenAI's Realtime API with WebSocket for low-latency responses
+### Common Features (Both Integrations)
+- **Real-time Conversations**: WebSocket-based low-latency responses
 - **Native Speech-to-Speech**: Direct audio processing without separate STT/TTS pipeline
-- **Voice Support**: Native speech-to-speech capabilities with configurable voices
-- **MCP Server Integration**: Connect to external MCP servers for extended tool capabilities
+- **Voice Support**: Multiple voice options with configurable settings
 - **Home Assistant Integration**: Built-in tools for controlling smart home devices
 - **Conversation Agent**: Works as a Home Assistant conversation agent
 - **Media Player Entity**: Control audio input/output directly
 - **Binary Sensors**: Monitor connection, listening, speaking, and processing states
+- **Custom Lovelace Card**: Browser-based microphone with real-time visualizer
+
+### OpenAI Realtime Specific
+- **MCP Server Integration**: Connect to external MCP servers for extended tool capabilities
 - **Custom STT/TTS Providers**: Use Realtime API for speech recognition and synthesis
+
+### Gemini Live Specific
+- **Session Resumption**: Automatic session recovery on disconnection
+- **Image/Audio File Input**: Send images and audio files for multimodal conversations
+- **Google Search Integration**: Built-in Google Search tool
+
+## Privacy & Personalization
+
+This integration offers an optional "personalization" feature that can improve and tailor AI responses by using conversation content to adapt behavior over time. For privacy reasons, personalization is disabled by default.
+
+- **What enabling personalization does:** The integration may send additional conversation content or metadata to the external AI service to allow it to provide more personalized responses.
+- **Default:** Off. You must explicitly enable it during configuration and confirm that you accept the privacy implications.
+- **Recommendation:** Keep personalization disabled unless you understand and accept the data handling implications and trust the service provider.
+
+If you enable personalization, review your service provider's privacy policy and data retention practices.
 
 ## Architecture
 
-Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this integration uses OpenAI's Realtime API which handles **speech-to-speech directly**:
+Unlike the default Home Assistant voice pipeline (STT → AI → TTS), these integrations use native speech-to-speech APIs:
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│ Default HA Pipeline                                      │
-│ ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐         │
-│ │ Mic │───▶│ STT Engine │───▶│ AI  │───▶│ TTS │───▶🔊  │
-│ └─────┘    └────────────┘    └─────┘    └─────┘         │
-└─────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────┐
+│ Default HA Pipeline                                       │
+│ ┌─────┐    ┌────────────┐    ┌─────┐    ┌─────┐           │
+│ │ Mic │───▶│ STT Engine │───▶│ AI  │───▶│ TTS │───▶🔊     │
+│ └─────┘    └────────────┘    └─────┘    └─────┘           │
+└───────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────┐
-│ OpenAI Realtime Pipeline                                 │
+│ OpenAI / Gemini Live Pipeline                        │
 │ ┌─────┐    ┌───────────────────────────────┐            │
-│ │ Mic │───▶│ OpenAI Realtime API           │───▶🔊     │
+│ │ Mic │───▶│ Realtime API                  │───▶🔊      │
 │ └─────┘    │ (Native Speech-to-Speech)     │            │
 │            └───────────────────────────────┘            │
 └─────────────────────────────────────────────────────────┘
@@ -38,8 +66,67 @@ Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this inte
 ## Requirements
 
 - Home Assistant 2024.1.0 or later
-- OpenAI API key with access to the Realtime API
+- **For OpenAI Realtime**: OpenAI API key with access to the Realtime API
+- **For Gemini Live**: Google AI API key (Gemini API)
 - Python 3.11 or later
+
+NOTE: Detailed configuration and platform-specific documentation has been moved into each integration folder. See:
+
+- [custom_components/openai_realtime](custom_components/openai_realtime) — OpenAI Realtime integration files and component-specific notes.
+- [custom_components/gemini_live/GOOGLE_DOC.md](custom_components/gemini_live/GOOGLE_DOC.md) — Gemini Live specific guidance and examples.
+
+The sections below provide a concise quick-config summary for each integration. For full details and advanced options, open the files in the corresponding component folders above.
+
+## Quick Configuration (Minimal examples)
+
+Below are compact configuration snippets and key settings you may need when setting up each integration. These are meant as a quick reference — see the component folders for extended examples and edge-case options.
+
+### OpenAI Realtime - Quick Config
+
+Core options exposed in the integration UI or via YAML when applicable:
+
+- `api_key`: Your OpenAI API key with Realtime access
+- `model`: Realtime model (example: `gpt-4o-realtime-preview`)
+- `voice`: Choose a voice (example: `alloy`)
+- `temperature`: Float 0.0–2.0
+- `mcp_servers`: List of MCP server configs (SSE or Stdio)
+
+Example minimal YAML for an MCP server entry (SSE):
+
+```yaml
+# OpenAI Realtime MCP server example
+- name: homeassistant
+   url: http://localhost:8123/api/mcp
+   type: sse
+   token: YOUR_LONG_LIVED_ACCESS_TOKEN
+```
+
+When using the integration UI, supply your `api_key` and configure model/voice/temperature there. Add MCP servers through the integration options.
+
+### Gemini Live - Quick Config
+
+Core options exposed in the integration UI or via YAML when applicable:
+
+- `api_key` / `google_api_key`: Your Google AI key for Gemini
+- `model`: Gemini model (example: `gemini-2.0-flash-exp`)
+- `voice`: Voice name (example: `Puck`)
+- `ephemeral_token` (optional): Use for client-side auth
+- `enable_session_resumption`: true/false
+- `enable_affective_dialog`: true/false (v1alpha)
+- `enable_proactive_audio`: true/false (v1alpha)
+
+Example minimal settings (UI-oriented):
+
+```yaml
+# Gemini Live basic settings (example representation)
+model: gemini-2.0-flash-exp
+voice: Puck
+enable_session_resumption: true
+# optional: ephemeral_token: xxxxx
+```
+
+For advanced features (session resumption handles, proactive audio, image inputs), open the Gemini docs in the component folder: [custom_components/gemini_live/GOOGLE_DOC.md](custom_components/gemini_live/GOOGLE_DOC.md)
+
 
 ## Installation
 
@@ -49,15 +136,21 @@ Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this inte
 2. Click on "Integrations"
 3. Click the three dots in the top right corner
 4. Select "Custom repositories"
-5. Add this repository URL
-6. Install "OpenAI Realtime Conversation"
+5. Add this repository URL: `https://github.com/your-username/ha-realtime-ai-audio`
+6. Install "Realtime AI Audio for Home Assistant"
 7. Restart Home Assistant
 
 ### Manual Installation
 
-1. Download the `custom_components/openai_realtime` folder
-2. Copy it to your Home Assistant `custom_components` directory
+1. Download the repository
+2. Copy both folders to your Home Assistant `custom_components` directory:
+   - `custom_components/openai_realtime` - For OpenAI integration
+   - `custom_components/gemini_live_audio` - For Gemini integration
 3. Restart Home Assistant
+
+---
+
+# 🔵 OpenAI Realtime Integration
 
 ## Configuration
 
@@ -65,7 +158,7 @@ Unlike the default Home Assistant voice pipeline (STT → AI → TTS), this inte
 2. Search for "OpenAI Realtime"
 3. Enter your OpenAI API key
 4. Configure the settings:
-   - **Model**: Select the Realtime model (default: `gpt-realtime`)
+   - **Model**: Select the Realtime model (default: `gpt-4o-realtime-preview`)
    - **Voice**: Choose the voice for audio responses
    - **Instructions**: Custom system instructions
    - **Temperature**: Response creativity (0.0 - 2.0)
@@ -477,7 +570,7 @@ The Realtime API uses PCM audio at 24kHz. The integration handles audio conversi
 - Input: PCM 16-bit, 24kHz
 - Output: PCM 16-bit, 24kHz
 
-## Voice Options
+## OpenAI Voice Options
 
 Available voices:
 - `alloy` - Neutral, balanced
@@ -486,9 +579,9 @@ Available voices:
 - `onyx` - Deep, authoritative
 - `nova` - Youthful, energetic
 - `shimmer` - Clear, expressive
-- `marin` - Warm, engaging
+- `coral` - Warm, engaging
 
-## Pricing
+## OpenAI Pricing
 
 OpenAI Realtime API pricing (per 1M tokens):
 
@@ -497,7 +590,108 @@ OpenAI Realtime API pricing (per 1M tokens):
 | Text | $4.00 | $0.50 | $16.00 |
 | Audio | $32.00 | $0.50 | $64.00 |
 
-## Troubleshooting
+---
+
+# 🟢 Gemini Live Integration
+
+## Configuration
+
+1. Go to **Settings** → **Devices & Services** → **Add Integration**
+2. Search for "Gemini Live"
+3. Enter your Google AI API key
+4. Configure the settings:
+   - **Model**: Select the model (default: `gemini-2.0-flash-exp`)
+   - **Voice**: Choose the voice for audio responses
+   - **Instructions**: Custom system instructions
+
+## Gemini Voice Options
+
+Available voices:
+- `Puck` - Playful, energetic
+- `Charon` - Deep, mysterious
+- `Kore` - Warm, friendly
+- `Fenrir` - Strong, confident
+- `Aoede` - Clear, melodic
+
+## Gemini Lovelace Card
+
+### Add Lovelace Resource
+
+1. Go to **Settings** → **Dashboards** → **⋮ (three dots)** → **Resources**
+2. Click **Add Resource**
+3. Enter:
+   - **URL**: `/gemini_live/gemini-live-card.js?v=1`
+   - **Resource type**: JavaScript Module
+4. Click **Create**
+
+### Add the Card to Dashboard
+
+```yaml
+type: custom:gemini-live-card
+title: Gemini Live Voice
+```
+
+### Card Features
+
+- **Push-to-Talk**: Click the microphone button to start/stop speaking
+- **Real-time Visualizer**: Live audio level visualization
+- **Live Transcripts**: See your input and AI responses in real-time
+- **Text Input**: Type messages instead of speaking
+- **File Upload**: Send images and audio files for multimodal conversations
+- **Mute Toggle**: Mute microphone while AI is speaking to prevent echo
+
+### Card Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `title` | string | "Gemini Live" | Card title |
+
+## Gemini Services
+
+#### gemini_live.send_message
+Send a text message and get a response.
+```yaml
+service: gemini_live.send_message
+data:
+  message: "What's the weather like?"
+```
+
+#### gemini_live.send_audio
+Send audio data directly to the API.
+```yaml
+service: gemini_live.send_audio
+data:
+  audio_data: "<base64_encoded_pcm_audio>"
+```
+
+#### gemini_live.start_listening
+Start the audio session.
+```yaml
+service: gemini_live.start_listening
+```
+
+#### gemini_live.stop_listening
+Stop audio processing.
+```yaml
+service: gemini_live.stop_listening
+```
+
+## Gemini Binary Sensors
+
+| Sensor | Description |
+|--------|-------------|
+| `binary_sensor.gemini_live_connected` | WebSocket connection status |
+| `binary_sensor.gemini_live_listening` | User is speaking |
+| `binary_sensor.gemini_live_speaking` | Assistant is responding |
+| `binary_sensor.gemini_live_processing` | Request is being processed |
+
+## Gemini Pricing
+
+Gemini 2.0 Flash is currently in preview with generous free tier limits. Check [Google AI pricing](https://ai.google.dev/pricing) for current rates.
+
+---
+
+# Troubleshooting
 
 ### Enable Debug Logging
 
@@ -693,7 +887,7 @@ The JS card version is automatically updated based on file modification time. Ho
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/ha-openai-realtime.git
+git clone https://github.com/your-username/ha-realtime-ai-audio.git
 
 # Create virtual environment
 python -m venv venv
@@ -704,6 +898,7 @@ pip install -r requirements.txt
 
 # Link to Home Assistant custom_components
 ln -s $(pwd)/custom_components/openai_realtime ~/.homeassistant/custom_components/
+ln -s $(pwd)/custom_components/gemini_live ~/.homeassistant/custom_components/
 ```
 
 ### Running Tests
@@ -721,6 +916,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 Contributions are welcome! Please read our contributing guidelines and submit pull requests.
 
 ## Changelog
+
+### 2.0.0
+- Added Gemini Live Audio integration with Google's Gemini Live API
+- Gemini features: Session resumption, image/audio input, Google Search
+- Renamed project to "ha-realtime-ai-audio"
+- Updated README for both integrations
 
 ### 1.0.0
 - Initial release
